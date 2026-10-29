@@ -152,10 +152,16 @@ class PackageInstaller(
                 if (routing is InstallResult.Failure) return@withContext routing
 
                 onProgress("Indexing bundled places")
-                val placesFile = File(locator.packagesDir, SAMPLE_PLACES)
+                val placesFile = File(locator.packagesDir, PLACES_TARGET)
                 if (!placesFile.exists() || placesFile.length() == 0L) {
-                    context.assets.open(SAMPLE_PLACES).use { input ->
-                        placesFile.outputStream().use { output -> input.copyTo(output) }
+                    // The packaging step may store the pack either gzipped or decompressed (AGP
+                    // rewrites ".gz" assets), so accept whichever name actually ships. The reader
+                    // sniffs the gzip magic and handles both.
+                    val copied = copyFirstAsset(placesFile, SAMPLE_PLACES, SAMPLE_PLACES_PLAIN)
+                    if (!copied) {
+                        return@withContext InstallResult.Failure(
+                            "The bundled places pack is missing from this build.",
+                        )
                     }
                 }
                 val places = installPlaces(BUNDLED_REGION_ID, placesFile, onProgress)
@@ -186,11 +192,31 @@ class PackageInstaller(
         else -> error.message ?: "Installing $subject failed (${error.javaClass.simpleName})."
     }
 
+    /** Copies the first asset name that exists, so packaging differences cannot break install. */
+    private fun copyFirstAsset(target: File, vararg assetNames: String): Boolean {
+        for (name in assetNames) {
+            val copied = runCatching {
+                context.assets.open(name).use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+                true
+            }.getOrDefault(false)
+            if (copied) return true
+        }
+        return false
+    }
+
     companion object {
         private const val TAG = "PackageInstaller"
         const val BUNDLED_REGION_ID = "sample-andorra"
         /** Pre-built GraphHopper graph for the bundled sample region. */
         const val SAMPLE_GRAPH = "routing_andorra.zip"
         const val SAMPLE_PLACES = "places_andorra.jsonl.gz"
+
+        /** Same pack if the build stores it decompressed. */
+        const val SAMPLE_PLACES_PLAIN = "places_andorra.jsonl"
+
+        /** Filename used once copied into app storage. */
+        const val PLACES_TARGET = "places_andorra.jsonl"
     }
 }
