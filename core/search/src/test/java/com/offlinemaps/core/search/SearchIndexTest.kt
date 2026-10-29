@@ -148,7 +148,7 @@ class SearchIndexTest {
 
     @Test
     fun `fts terms are sanitised`() {
-        assertEquals("Main* AND Street*", SearchIndex.toFtsTerms("Main Street"))
+        assertEquals("Main* Street*", SearchIndex.toFtsTerms("Main Street"))
         assertEquals("", SearchIndex.toFtsTerms("   "))
         assertEquals("Ordino*", SearchIndex.toFtsTerms("Ordino;"))
     }

@@ -205,8 +205,13 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             if (cleaned.isEmpty()) return ""
             // FTS4 prefix queries must be written as `term*` - a quoted `"term"*` only matches a
             // complete token and silently returns nothing for partial input.
+            //
+            // Terms are joined with a space, not " AND ". Android's bundled SQLite is built
+            // without the FTS3/4 "enhanced query syntax" flag, so it treats a literal AND as a
+            // search term (returning nothing) where desktop SQLite treats it as an operator.
+            // Space-separated terms are an implicit AND on both.
             val terms = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }.take(6)
-            return terms.joinToString(" AND ") { "$it*" }
+            return terms.joinToString(" ") { "$it*" }
         }
 
         fun weightForType(type: String): Int = when (type.lowercase()) {
