@@ -59,13 +59,52 @@ private val DarkScheme = darkColorScheme(
 )
 
 private val AppTypography = Typography(
-    displaySmall = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, 32.sp, 38.sp, (-0.5).sp),
-    headlineSmall = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, 22.sp, 28.sp, (-0.2).sp),
-    titleMedium = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, 16.sp, 22.sp),
-    bodyMedium = TextStyle(FontFamily.SansSerif, FontWeight.Normal, 14.sp, 20.sp),
-    bodySmall = TextStyle(FontFamily.SansSerif, FontWeight.Normal, 12.sp, 16.sp),
-    labelLarge = TextStyle(FontFamily.SansSerif, FontWeight.Medium, 14.sp, 18.sp, 0.1.sp),
-    labelSmall = TextStyle(FontFamily.SansSerif, FontWeight.Medium, 11.sp, 14.sp, 0.4.sp),
+    displaySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 32.sp,
+        lineHeight = 38.sp,
+        letterSpacing = (-0.5).sp,
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = (-0.2).sp,
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+    ),
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
+        letterSpacing = 0.1.sp,
+    ),
+    labelSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        letterSpacing = 0.4.sp,
+    ),
 )
 
 @Composable
