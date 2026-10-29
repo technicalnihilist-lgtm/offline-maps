@@ -2,6 +2,7 @@ package com.offlinemaps.core.routing
 
 import com.graphhopper.GHRequest
 import com.graphhopper.GraphHopper
+import com.graphhopper.GraphHopperConfig
 import com.graphhopper.config.Profile
 import com.graphhopper.routing.util.EncodingManager
 import com.graphhopper.util.Instruction
@@ -54,20 +55,23 @@ class RoutingEngine(private val graphRoot: File) {
             hopper = null
         }
         graphRoot.mkdirs()
-        val h = GraphHopper()
-        h.setGraphHopperLocation(graphRoot.absolutePath)
-        h.setEncodingManager(EncodingManager.create(ENCODING_FLAGS))
-        h.setProfiles(buildProfiles(profiles))
-        h.setStoreOnFlush(true)
-        h.setAllowWrites(true)
-        if (osmFile != null && osmFile.exists()) {
+        // GraphHopper 2.x configures through GraphHopperConfig; setOSMFile no longer exists.
+        val config = GraphHopperConfig()
+            .putObject("graph.location", graphRoot.absolutePath)
+            .putObject("graph.flag_encoders", ENCODING_FLAGS)
+            .setProfiles(buildProfiles(profiles))
+        val importing = osmFile != null && osmFile.exists()
+        if (importing) {
             onProgress("Reading OpenStreetMap extract")
-            h.setOSMFile(osmFile.absolutePath)
-            h.importOrLoad()
+            config.putObject("datareader.file", osmFile!!.absolutePath)
         } else {
             onProgress("Loading routing graph")
-            h.load(graphRoot.absolutePath)
         }
+
+        val h = GraphHopper().init(config)
+        h.setStoreOnFlush(true)
+        h.setAllowWrites(true)
+        h.importOrLoad()
         hopper = h
         loadedProfiles = profiles
         onProgress("Routing ready")
