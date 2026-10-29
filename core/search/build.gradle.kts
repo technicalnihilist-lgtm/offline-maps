@@ -22,7 +22,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
-    testImplementation("org.robolectric:nativeruntime-dist-compat:1.0.19")
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.truth)
     testImplementation(libs.kotlinx.coroutines.test)
