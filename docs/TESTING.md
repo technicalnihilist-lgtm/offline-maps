@@ -20,7 +20,8 @@ Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/409011
 | `core/routing` | `RoutingEngineIntegrationTest` | 6 |
 | `core/search` | `SearchIndexTest` | 12 |
 | `core/data` | `RepositoryTest` | 10 |
-| | **total** | **99** |
+| `core/map` | `StyleFileWriterTest` | 5 |
+| | **total** | **106** |
 
 Counts are read from the Gradle HTML report artifacts of that run (`testDebugUnitTest`).
 `core/map`, `core/location` and `core/ui` currently have no unit tests of their own — their logic is
@@ -74,6 +75,18 @@ Android (its reader needs `javax.xml.stream`), so the app now loads a **pre-buil
 `RoutingEngineIntegrationTest` unpacks that exact asset, calls `engine.load()`, routes car/bike/foot
 across Andorra, and asserts real distances, manoeuvres, OSM street names and a missing-graph failure.
 `RoutingEngineAndroidTest` repeats it under Robolectric's real android-all runtime.
+
+## Offline map tiles — what is and is not covered
+
+A tile download is executed by MapLibre's native offline manager, so it can only be exercised on a
+device. What is tested here is the input it depends on: `StyleFileWriterTest` proves the generated
+style is written to disk, returns a well-formed `file://` URL, contains version 8 with the vector
+source, extruded buildings and terrain, honours the terrain toggle, and separates light/dark files.
+A wrong style file or a malformed URL is the failure mode that makes `createOfflineRegion` silently
+download nothing, which is what "download does not work" looks like in practice.
+
+Still device-only: the actual tile fetch, progress callbacks, pause/resume of a MapLibre region, and
+whether the map renders from cache in airplane mode.
 
 ## What is still NOT tested
 

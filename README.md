@@ -39,7 +39,7 @@ This section is first on purpose. Read it before anything else.
 | Kotlin/Compose app, 9-module architecture | **Implemented**, compiles |
 | MapLibre vector map with tilt/rotate, 2D↔3D toggle, dark/light themes | **Implemented** (needs a device to render) |
 | 3D extruded buildings + terrain DEM + hillshade from open data | **Implemented** as generated style layers |
-| Offline region downloads (MapLibre offline store), MBTiles import | **Implemented** |
+| Offline map tile downloads (MapLibre offline store) + MBTiles import | **Implemented** |
 | Resumable HTTP downloads with checksum verification, pause/cancel/retry | **Implemented and unit-tested** |
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
@@ -62,6 +62,9 @@ This section is first on purpose. Read it before anything else.
 * **Routing speed models are simplified.** GraphHopper 10 requires an explicit custom model per
   profile; ours caps speed by road class and honours `maxspeed` when tagged. It is not a
   lane-level traffic model.
+* **Offline map tiles and offline routing are separate downloads.** Tiles make the *map* work with no
+  network; routing needs a routing graph, which a phone cannot build (see below). The bundled Andorra
+  sample includes one, so the full offline route flow is demonstrable there.
 * **A phone cannot build a routing graph from a raw OSM extract.** GraphHopper's OSM reader depends
   on `javax.xml.stream`, which Android does not implement, so the reader class cannot even be loaded
   on a device. (This was the v1.0.0 crash after installing a region.) The app therefore loads a
@@ -159,8 +162,11 @@ Details, proxy/CI hints and troubleshooting: [`docs/BUILDING.md`](docs/BUILDING.
 1. First launch: the map loads online vector tiles (no key needed). Nothing is uploaded.
 2. **Explore** → "Install sample region" builds a real routing graph and search index from the
    bundled Andorra extract — works in airplane mode afterwards.
-3. **Downloads** → pick a region, tap *Size* to read the real size from the server, then *Download*.
-   Progress, pause/resume/cancel and checksum verification are real; failures explain themselves.
+3. **Downloads** → pick a region and tap *Download* to cache its map tiles for offline viewing.
+   Progress comes from MapLibre's own resource counter, and pause / resume / cancel / delete all work.
+   Sixteen regions ship in the catalogue (nine Indian cities, India as a whole, plus Singapore, London,
+   Paris, New York and Tokyo); sizes are computed on device from the bounding box and zoom range and
+   labelled as estimates.
 4. Search a place (or type `42.5069, 1.5212`), pick a profile (driving/cycling/walking), *Start*.
 5. Navigation shows the next manoeuvre, remaining distance/time/ETA, speaks it via the on-device TTS
    voice, keeps running with the screen off (foreground service), and recalculates after a deviation.

@@ -141,7 +141,7 @@ private fun RegionRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(pkg.type.name.lowercase().replace('_', ' '), style = MaterialTheme.typography.labelLarge)
+                    Text(packageLabel(pkg.type), style = MaterialTheme.typography.labelLarge)
                     Text(
                         "Size: " + (state.resolvedSizes[pkg.url] ?: pkg.sizeBytes)
                             .let { if (it > 0) Formatters.bytes(it) else "unknown until download starts" },
@@ -155,13 +155,24 @@ private fun RegionRow(
                     DownloadStatus.COMPLETED -> StatusChip(text = "Installed", tone = StatusTone.POSITIVE)
                     DownloadStatus.FAILED -> StatusChip(text = "Failed", tone = StatusTone.ERROR)
                     else -> {
-                        TextButton(onClick = { onProbe(pkg) }) { Text("Size") }
+                        // Tile regions need no URL, so there is nothing to probe on the server.
+                        if (pkg.url.isNotBlank()) {
+                            TextButton(onClick = { onProbe(pkg) }) { Text("Size") }
+                        }
                         Button(onClick = { onStart(pkg) }) { Text("Download") }
                     }
                 }
             }
         }
     }
+}
+
+/** Human label for a package type. */
+internal fun packageLabel(type: com.offlinemaps.core.common.MapPackageType): String = when (type) {
+    com.offlinemaps.core.common.MapPackageType.TILE_REGION -> "Offline map tiles"
+    com.offlinemaps.core.common.MapPackageType.ROUTING_OSM -> "Routing graph (build required)"
+    com.offlinemaps.core.common.MapPackageType.PLACES_PACK -> "Offline search data"
+    com.offlinemaps.core.common.MapPackageType.MBTILES -> "MBTiles package"
 }
 
 @Composable
