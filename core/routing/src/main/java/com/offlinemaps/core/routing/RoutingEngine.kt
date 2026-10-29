@@ -3,8 +3,7 @@ package com.offlinemaps.core.routing
 import com.graphhopper.GHRequest
 import com.graphhopper.GraphHopper
 import com.graphhopper.config.Profile
-import com.graphhopper.json.Statement
-import com.graphhopper.util.CustomModel
+import com.graphhopper.routing.util.EncodingManager
 import com.graphhopper.util.Instruction
 import com.graphhopper.util.PointList
 import com.offlinemaps.core.common.GeoMath
@@ -21,14 +20,14 @@ import kotlin.concurrent.withLock
  * from disk on subsequent launches (measured at ~0.3 s for a small region). No network is used at
  * any point during routing.
  *
- * GraphHopper 10 rejects the legacy `fastest`/`shortest` weightings for these profiles and requires
- * an explicit custom model per profile. The speed models below cap speed by road class and honour
- * OSM `maxspeed` where present - simplified, and documented as a known limitation.
+ * Pinned to GraphHopper 2.4 deliberately. GraphHopper 4+ compiles custom-model expressions with
+ * janino, which emits JVM bytecode that ART cannot load: `CustomModelParser` throws on a real device
+ * during import, and again on every graph load. 2.4 is the last release using the FlagEncoder /
+ * vehicle + weighting API, so nothing is compiled at runtime, and it has no javax.xml.stream or
+ * java.awt dependency. Its default speed tables are also better than the hand-rolled model this
+ * project used before.
  */
-class RoutingEngine(
-    private val graphRoot: File,
-    private val encodedValues: String = ENCODED_VALUES,
-) {
+class RoutingEngine(private val graphRoot: File) {
     private val lock = ReentrantLock()
     private var hopper: GraphHopper? = null
     private var loadedProfiles: List<TravelProfile> = emptyList()
@@ -57,7 +56,7 @@ class RoutingEngine(
         graphRoot.mkdirs()
         val h = GraphHopper()
         h.setGraphHopperLocation(graphRoot.absolutePath)
-        h.setEncodedValuesString(encodedValues)
+        h.setEncodingManager(EncodingManager.create(ENCODING_FLAGS))
         h.setProfiles(buildProfiles(profiles))
         h.setStoreOnFlush(true)
         h.setAllowWrites(true)
@@ -67,7 +66,7 @@ class RoutingEngine(
             h.importOrLoad()
         } else {
             onProgress("Loading routing graph")
-            h.load()
+            h.load(graphRoot.absolutePath)
         }
         hopper = h
         loadedProfiles = profiles
@@ -158,41 +157,18 @@ class RoutingEngine(
 
     private fun buildProfiles(profiles: List<TravelProfile>): List<Profile> = profiles.map { profile ->
         when (profile) {
-            TravelProfile.CAR -> Profile("car").setCustomModel(carModel())
-            TravelProfile.BIKE -> Profile("bike").setCustomModel(bikeModel())
-            TravelProfile.FOOT -> Profile("foot").setCustomModel(footModel())
+            TravelProfile.CAR -> Profile("car").setVehicle("car").setWeighting("fastest")
+            TravelProfile.BIKE -> Profile("bike").setVehicle("bike").setWeighting("fastest")
+            TravelProfile.FOOT -> Profile("foot").setVehicle("foot").setWeighting("shortest")
         }
     }
 
     companion object {
-        const val ENCODED_VALUES =
-            "car_access,car_average_speed,bike_access,bike_average_speed,foot_access,foot_average_speed," +
-                "road_class,road_environment,road_access,max_speed"
-
         /**
-         * Simplified car speed model: cap by road class, honour OSM maxspeed when tagged.
-         * All statements use LIMIT so the effective speed is the minimum of the applicable caps.
+         * Flag encoders used to build the graph. No turn costs: they need extra per-edge storage and
+         * add nothing to the guidance this app gives.
          */
-        fun carModel(): CustomModel = CustomModel().setDistanceInfluence(70.0)
-            .addToSpeed(Statement.If("true", Statement.Op.LIMIT, "130"))
-            .addToSpeed(Statement.If("max_speed > 0", Statement.Op.LIMIT, "max_speed"))
-            .addToSpeed(Statement.If("road_class == MOTORWAY", Statement.Op.LIMIT, "110"))
-            .addToSpeed(Statement.If("road_class == TRUNK", Statement.Op.LIMIT, "90"))
-            .addToSpeed(Statement.If("road_class == PRIMARY", Statement.Op.LIMIT, "80"))
-            .addToSpeed(Statement.If("road_class == SECONDARY", Statement.Op.LIMIT, "65"))
-            .addToSpeed(Statement.If("road_class == TERTIARY", Statement.Op.LIMIT, "55"))
-            .addToSpeed(Statement.If("road_class == RESIDENTIAL", Statement.Op.LIMIT, "35"))
-            .addToSpeed(Statement.If("road_class == SERVICE", Statement.Op.LIMIT, "20"))
-            .addToSpeed(Statement.If("road_class == TRACK", Statement.Op.LIMIT, "15"))
-
-        fun bikeModel(): CustomModel = CustomModel().setDistanceInfluence(30.0)
-            .addToSpeed(Statement.If("true", Statement.Op.LIMIT, "25"))
-            .addToSpeed(Statement.If("road_class == PRIMARY", Statement.Op.LIMIT, "18"))
-            .addToSpeed(Statement.If("road_class == TRACK", Statement.Op.LIMIT, "12"))
-
-        fun footModel(): CustomModel = CustomModel().setDistanceInfluence(0.0)
-            .addToSpeed(Statement.If("true", Statement.Op.LIMIT, "5"))
-            .addToSpeed(Statement.If("road_class == STEPS", Statement.Op.LIMIT, "2"))
+        const val ENCODING_FLAGS = "car,bike,foot"
     }
 }
 

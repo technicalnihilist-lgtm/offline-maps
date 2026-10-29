@@ -13,6 +13,5 @@
 -dontwarn java.awt.**
 -dontwarn org.apache.**
 -dontwarn org.locationtech.jts.**
--dontwarn org.codehaus.janino.**
 -keepclassmembers class * { @com.fasterxml.jackson.annotation.** *; }
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
