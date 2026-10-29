@@ -8,6 +8,23 @@ Project title: **WorldMap 3D Offline** · App name: **Offline Maps** · package 
 
 ---
 
+## Screenshots
+
+These are **UI design reference renders**, generated from the same layout, colours and strings as
+the Compose UI — not device screenshots. No emulator was available in the build environment
+(`/dev/kvm` absent), and no APK could be built there, so a real capture was impossible. Each image
+carries that caption in the artwork itself. See [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md).
+
+| Explore | Route preview |
+|---|---|
+| ![Explore screen](docs/screenshots/explore.png) | ![Route preview](docs/screenshots/route.png) |
+
+| Turn-by-turn guidance | Downloads |
+|---|---|
+| ![Navigation](docs/screenshots/navigate.png) | ![Downloads](docs/screenshots/downloads.png) |
+
+---
+
 ## What actually works, and what does not
 
 This section is first on purpose. Read it before anything else.
