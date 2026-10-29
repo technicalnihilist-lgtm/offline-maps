@@ -52,6 +52,9 @@ subprojects {
         testLogging {
             events("passed", "failed", "skipped")
             exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            // Diagnostics printed by tests (e.g. the Android-runtime import trace) must reach the
+            // CI log, otherwise a failure there is invisible.
+            showStandardStreams = true
         }
         maxHeapSize = "1g"
     }

@@ -47,9 +47,11 @@ class PackageInstaller(
                 "Not enough memory to build the routing graph for $displayName. " +
                     "Try a smaller region - very large extracts (a whole country) need a desktop tool.",
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Catch Throwable, not Exception: a missing desktop-only class on Android surfaces as
+            // NoClassDefFoundError, and letting an Error escape here kills the whole app.
             Log.e(TAG, "install failed for $regionId", e)
-            InstallResult.Failure(e.message ?: "Installing $displayName failed.")
+            InstallResult.Failure(describe(e, displayName))
         }
     }
 
@@ -114,10 +116,29 @@ class PackageInstaller(
                 if (places is InstallResult.Failure) return@withContext places
 
                 InstallResult.Success("Sample region installed: routing and offline search are ready.")
-            } catch (e: Exception) {
-                InstallResult.Failure(e.message ?: "Could not install the bundled sample region.")
+            } catch (e: OutOfMemoryError) {
+                InstallResult.Failure(
+                    "Not enough memory to build the routing graph for the sample region. " +
+                        "Close other apps and try again.",
+                )
+            } catch (e: Throwable) {
+                Log.e(TAG, "bundled sample install failed", e)
+                InstallResult.Failure(describe(e, "the sample region"))
             }
         }
+
+    /** Turns any throwable into something a user can act on, without leaking internals. */
+    private fun describe(error: Throwable, subject: String): String = when (error) {
+        is NoClassDefFoundError, is NoSuchMethodError ->
+            "The routing engine needs a component that is missing on this device " +
+                "(${error.message}). This is a packaging problem in the app, not something you did - " +
+                "please report it."
+        is OutOfMemoryError ->
+            "Not enough memory to prepare $subject. Close other apps and try again."
+        is SecurityException ->
+            "Storage permission was refused, so $subject could not be installed."
+        else -> error.message ?: "Installing $subject failed (${error.javaClass.simpleName})."
+    }
 
     companion object {
         private const val TAG = "PackageInstaller"
