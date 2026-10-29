@@ -10,17 +10,15 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.zip.ZipFile
 
 /**
- * Runs the routing engine under the **Android runtime** (Robolectric supplies the real
- * android-all class library), not a desktop JVM.
+ * The on-device path, run against the **real Android runtime** (Robolectric supplies android-all).
  *
- * This is the regression test for the on-device crash after installing a region: GraphHopper's
- * dependency graph references desktop-only classes (javax.xml.stream, java.awt, javax.imageio,
- * java.lang.instrument) that do not exist on Android, and any of them being touched during import
- * throws an Error that must not escape to the UI.
- *
- * The test prints the full failure so CI logs show the real cause even when it fails.
+ * Regression test for "app crashes after installing a region": the engine must unpack and load a
+ * shipped graph on Android, and must return a message rather than throwing when anything is wrong. It
+ * also guards against reintroducing a GraphHopper version whose OSM reader needs `javax.xml.stream`,
+ * which Android does not implement.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -29,49 +27,54 @@ class RoutingEngineAndroidTest {
     @get:Rule
     val temp = TemporaryFolder()
 
-    private fun andorraExtract(): File {
-        val osm = temp.newFile("andorra.osm.pbf")
-        javaClass.classLoader!!.getResourceAsStream("andorra.osm.pbf")!!.use { input ->
-            osm.outputStream().use { output -> input.copyTo(output) }
+    private fun unpackGraph(): File {
+        val graphDir = File(temp.root, "graph")
+        graphDir.mkdirs()
+        val zip = temp.newFile("routing_andorra.zip")
+        javaClass.classLoader!!.getResourceAsStream("routing_andorra.zip")!!.use { input ->
+            zip.outputStream().use { output -> input.copyTo(output) }
         }
-        return osm
+        ZipFile(zip).use { archive ->
+            archive.entries().asSequence().filter { !it.isDirectory }.forEach { entry ->
+                val target = File(graphDir, entry.name)
+                target.parentFile?.mkdirs()
+                archive.getInputStream(entry).use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+        return graphDir
     }
 
     @Test
-    fun `imports an osm extract under the android runtime`() {
-        val graphDir = File(temp.root, "graph")
-        val engine = RoutingEngine(graphDir)
-        val attempt = runCatching {
-            engine.importOrLoad(andorraExtract(), listOf(TravelProfile.CAR)) { phase ->
-                println("[android-runtime] import phase: $phase")
-            }
-        }
-        attempt.exceptionOrNull()?.printStackTrace()
-        println("[android-runtime] import outcome: ${attempt.isSuccess}")
-        assertTrue(
-            "GraphHopper import threw under the Android runtime: " +
-                "${attempt.exceptionOrNull()?.javaClass?.name}: ${attempt.exceptionOrNull()?.message}",
-            attempt.isSuccess,
-        )
+    fun `loads a shipped graph under the android runtime`() {
+        val engine = RoutingEngine(unpackGraph())
+        val loaded = engine.load(listOf(TravelProfile.CAR))
+        loaded.exceptionOrNull()?.printStackTrace()
+        println("[android-runtime] load outcome: ${loaded.isSuccess} ${loaded.exceptionOrNull()?.message}")
+        assertTrue("graph load failed on Android: ${loaded.exceptionOrNull()}", loaded.isSuccess)
         engine.close()
     }
 
     @Test
-    fun `routes after importing under the android runtime`() {
-        val graphDir = File(temp.root, "graph-route")
-        val engine = RoutingEngine(graphDir)
-        val imported = runCatching { engine.importOrLoad(andorraExtract(), listOf(TravelProfile.CAR)) }
-        if (imported.isFailure) {
-            imported.exceptionOrNull()?.printStackTrace()
-            throw AssertionError("import failed: ${imported.exceptionOrNull()}")
+    fun `routes under the android runtime`() {
+        val engine = RoutingEngine(unpackGraph())
+        val loaded = engine.load(listOf(TravelProfile.CAR))
+        if (loaded.isFailure) {
+            loaded.exceptionOrNull()?.printStackTrace()
+            throw AssertionError("load failed: ${loaded.exceptionOrNull()}")
         }
-        val result = engine.route(
-            GeoPoint(42.5069, 1.5212),
-            GeoPoint(42.5090, 1.5340),
-            TravelProfile.CAR,
-        )
+        val result = engine.route(GeoPoint(42.5069, 1.5212), GeoPoint(42.5090, 1.5340), TravelProfile.CAR)
         println("[android-runtime] route result: $result")
-        assertTrue("routing failed under the Android runtime: $result", result is RouteResult.Success)
+        assertTrue("routing failed on Android: $result", result is RouteResult.Success)
+        engine.close()
+    }
+
+    @Test
+    fun `a missing graph returns a failure instead of crashing`() {
+        val engine = RoutingEngine(File(temp.root, "empty"))
+        val loaded = engine.load()
+        assertTrue("expected a failure, got $loaded", loaded.isFailure)
         engine.close()
     }
 }

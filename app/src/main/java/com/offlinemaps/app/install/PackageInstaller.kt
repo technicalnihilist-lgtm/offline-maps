@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.core.common.MapPackageType
-import com.offlinemaps.core.common.TravelProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -55,17 +54,64 @@ class PackageInstaller(
         }
     }
 
+    /**
+     * Installs a pre-built routing graph package (a zip of a GraphHopper graph directory).
+     *
+     * A raw `.osm.pbf` cannot be turned into a graph on the phone: GraphHopper's OSM reader needs
+     * `javax.xml.stream`, which Android does not implement, so the class cannot be loaded on a
+     * device. Graphs are built with `tools/build_routing_graph` and shipped as a package.
+     */
     private suspend fun installRouting(
         regionId: String,
         file: File,
         onProgress: (String) -> Unit,
     ): InstallResult {
-        onProgress("Building routing graph (this can take a minute)")
-        locator.routingEngine.importOrLoad(file, TravelProfile.entries) { phase -> onProgress(phase) }
-        locator.installedRegions.setRoutingReady(regionId, true)
-        // The extract has done its job; the graph is what we keep.
-        runCatching { file.delete() }
-        return InstallResult.Success("Routing data for this region is ready offline.")
+        if (file.name.contains(".osm.pbf", ignoreCase = true) || file.extension.equals("pbf", true)) {
+            return InstallResult.Failure(
+                "This package is a raw OpenStreetMap extract. Building a routing graph from it needs " +
+                    "desktop-class libraries that Android does not provide, so it cannot be imported on " +
+                    "the phone. Use a pre-built routing package instead - see tools/build_routing_graph.",
+            )
+        }
+        onProgress("Unpacking routing graph")
+        val graphDir = locator.routingEngine.graphDirectory()
+        graphDir.deleteRecursively()
+        graphDir.mkdirs()
+        try {
+            unzip(file, graphDir)
+        } catch (e: Throwable) {
+            Log.e(TAG, "routing package unzip failed", e)
+            return InstallResult.Failure("The routing package is not a valid graph archive.")
+        }
+        onProgress("Loading routing graph")
+        return locator.routingEngine.load { phase -> onProgress(phase) }.fold(
+            onSuccess = {
+                locator.installedRegions.setRoutingReady(regionId, true)
+                InstallResult.Success("Routing data for this region is ready offline.")
+            },
+            onFailure = { InstallResult.Failure(it.message ?: "The routing graph could not be loaded.") },
+        )
+    }
+
+    /** Extracts a zip, refusing entries that would escape the destination directory. */
+    private fun unzip(zip: File, destination: File) {
+        java.util.zip.ZipFile(zip).use { archive ->
+            archive.entries().asSequence().forEach { entry ->
+                val target = File(destination, entry.name)
+                val root = destination.canonicalPath + File.separator
+                if (!target.canonicalPath.startsWith(root)) {
+                    throw SecurityException("Unsafe path in routing package: ${entry.name}")
+                }
+                if (entry.isDirectory) {
+                    target.mkdirs()
+                } else {
+                    target.parentFile?.mkdirs()
+                    archive.getInputStream(entry).use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+            }
+        }
     }
 
     private suspend fun installPlaces(
@@ -95,14 +141,14 @@ class PackageInstaller(
     suspend fun installBundledSample(onProgress: (String) -> Unit = {}): InstallResult =
         withContext(Dispatchers.IO) {
             try {
-                onProgress("Copying bundled sample region")
-                val osmFile = File(locator.packagesDir, SAMPLE_OSM)
-                if (!osmFile.exists() || osmFile.length() == 0L) {
-                    context.assets.open(SAMPLE_OSM).use { input ->
-                        osmFile.outputStream().use { output -> input.copyTo(output) }
+                onProgress("Installing bundled routing graph")
+                val graphZip = File(locator.packagesDir, SAMPLE_GRAPH)
+                if (!graphZip.exists() || graphZip.length() == 0L) {
+                    context.assets.open(SAMPLE_GRAPH).use { input ->
+                        graphZip.outputStream().use { output -> input.copyTo(output) }
                     }
                 }
-                val routing = installRouting(BUNDLED_REGION_ID, osmFile, onProgress)
+                val routing = installRouting(BUNDLED_REGION_ID, graphZip, onProgress)
                 if (routing is InstallResult.Failure) return@withContext routing
 
                 onProgress("Indexing bundled places")
@@ -143,7 +189,8 @@ class PackageInstaller(
     companion object {
         private const val TAG = "PackageInstaller"
         const val BUNDLED_REGION_ID = "sample-andorra"
-        const val SAMPLE_OSM = "sample_andorra.osm.pbf"
+        /** Pre-built GraphHopper graph for the bundled sample region. */
+        const val SAMPLE_GRAPH = "routing_andorra.zip"
         const val SAMPLE_PLACES = "places_andorra.jsonl.gz"
     }
 }

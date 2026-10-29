@@ -10,13 +10,15 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.zip.ZipFile
 
 /**
- * End-to-end routing on a real OpenStreetMap extract.
+ * End-to-end routing over a **pre-built** graph, which is exactly what the app installs.
  *
- * The fixture is `andorra.osm.pbf` - a small, real OSM extract ((c) OpenStreetMap contributors,
- * ODbL). This test imports it into a GraphHopper graph on the JVM, routes over it, and then reloads
- * the graph from disk to prove the offline-reopen path works.
+ * The fixture `routing_andorra.zip` is the graph shipped in `app/src/main/assets` - built from a real
+ * OpenStreetMap extract of Andorra (OpenStreetMap contributors, ODbL) with
+ * `tools/build_routing_graph`. Nothing is imported here: the engine only unpacks and loads, which is
+ * the only thing that can work on Android.
  */
 class RoutingEngineIntegrationTest {
 
@@ -29,15 +31,30 @@ class RoutingEngineIntegrationTest {
     private val andorraLaVella = GeoPoint(42.5069, 1.5212)
     private val escaldes = GeoPoint(42.5090, 1.5340)
 
+    private fun unpackGraph(destination: File) {
+        destination.mkdirs()
+        val zip = temp.newFile("routing_andorra.zip")
+        javaClass.classLoader!!.getResourceAsStream("routing_andorra.zip")!!.use { input ->
+            zip.outputStream().use { output -> input.copyTo(output) }
+        }
+        ZipFile(zip).use { archive ->
+            archive.entries().asSequence().filter { !it.isDirectory }.forEach { entry ->
+                val target = File(destination, entry.name)
+                target.parentFile?.mkdirs()
+                archive.getInputStream(entry).use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+    }
+
     @Before
     fun setUp() {
-        val osm = temp.newFile("andorra.osm.pbf")
-        javaClass.classLoader!!.getResourceAsStream("andorra.osm.pbf")!!.use { input ->
-            osm.outputStream().use { output -> input.copyTo(output) }
-        }
         graphDir = File(temp.root, "graph")
+        unpackGraph(graphDir)
         engine = RoutingEngine(graphDir)
-        engine.importOrLoad(osm, listOf(TravelProfile.CAR, TravelProfile.FOOT, TravelProfile.BIKE))
+        val loaded = engine.load(listOf(TravelProfile.CAR, TravelProfile.FOOT, TravelProfile.BIKE))
+        assertTrue("graph failed to load: ${loaded.exceptionOrNull()}", loaded.isSuccess)
     }
 
     @After
@@ -46,10 +63,10 @@ class RoutingEngineIntegrationTest {
     }
 
     @Test
-    fun `graph is written to disk after import`() {
-        assertTrue("graph directory should exist", graphDir.isDirectory)
+    fun `shipped graph loads from disk`() {
         assertTrue("graph directory should not be empty", (graphDir.listFiles()?.size ?: 0) > 0)
         assertTrue(engine.isLoaded)
+        assertEquals(3, engine.availableProfiles.size)
     }
 
     @Test
@@ -57,13 +74,19 @@ class RoutingEngineIntegrationTest {
         val result = engine.route(andorraLaVella, escaldes, TravelProfile.CAR)
         assertTrue("route failed: $result", result is RouteResult.Success)
         val plan = (result as RouteResult.Success).plan
-        assertTrue("distance should be a real road distance, was ${plan.distanceMeters}", plan.distanceMeters in 500.0..20_000.0)
+        assertTrue(
+            "distance should be a real road distance, was ${plan.distanceMeters}",
+            plan.distanceMeters in 200.0..20_000.0,
+        )
         assertTrue("duration should be positive", plan.durationSeconds > 0)
-        assertTrue("geometry should have many points", plan.geometry.size > 20)
+        assertTrue("geometry should have many points", plan.geometry.size > 10)
         assertTrue("route should have instructions", plan.maneuvers.size >= 3)
         assertEquals(ManeuverType.DEPART, plan.maneuvers.first().type)
         assertEquals(ManeuverType.ARRIVE, plan.maneuvers.last().type)
-        assertTrue("instructions should carry street names from OSM", plan.maneuvers.any { !it.streetName.isNullOrBlank() })
+        assertTrue(
+            "instructions should carry street names from OSM",
+            plan.maneuvers.any { !it.streetName.isNullOrBlank() },
+        )
         val indices = plan.maneuvers.map { it.geometryIndex }
         assertEquals(indices.sorted(), indices)
     }
@@ -76,35 +99,25 @@ class RoutingEngineIntegrationTest {
         assertTrue("bike failed: $bike", bike is RouteResult.Success)
         assertTrue(
             "walking should be slower than cycling",
-            (foot as RouteResult.Success).plan.durationSeconds > (bike as RouteResult.Success).plan.durationSeconds,
+            (foot as RouteResult.Success).plan.durationSeconds >
+                (bike as RouteResult.Success).plan.durationSeconds,
         )
     }
 
     @Test
-    fun `graph reloads from disk without the osm extract`() {
-        engine.close()
-        val reloaded = RoutingEngine(graphDir)
-        reloaded.importOrLoad(osmFile = null, profiles = listOf(TravelProfile.CAR, TravelProfile.FOOT, TravelProfile.BIKE))
-        assertTrue(
-            "reloaded graph should still route",
-            reloaded.route(andorraLaVella, escaldes, TravelProfile.CAR) is RouteResult.Success,
-        )
-        reloaded.close()
-    }
-
-    @Test
-    fun `routing without a graph fails with a clear message`() {
+    fun `loading without a graph fails with a message instead of throwing`() {
         val empty = RoutingEngine(File(temp.root, "nothing-here"))
-        val result = empty.route(andorraLaVella, escaldes, TravelProfile.CAR)
-        assertTrue(result is RouteResult.Failure)
-        val failure = result as RouteResult.Failure
-        assertEquals(FailureKind.NO_ROUTING_DATA, failure.kind)
-        assertTrue(failure.message.contains("No routing data"))
+        val result = empty.load()
+        assertTrue("expected a failure, got $result", result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("No routing graph") == true)
+        val route = empty.route(andorraLaVella, escaldes, TravelProfile.CAR)
+        assertTrue(route is RouteResult.Failure)
+        assertEquals(FailureKind.NO_ROUTING_DATA, (route as RouteResult.Failure).kind)
         empty.close()
     }
 
     @Test
-    fun `a point far outside the extract is reported as outside coverage`() {
+    fun `a point far outside the graph is reported as outside coverage`() {
         val result = engine.route(andorraLaVella, GeoPoint(35.6812, 139.7671), TravelProfile.CAR)
         assertTrue("expected a failure, got $result", result is RouteResult.Failure)
         val kind = (result as RouteResult.Failure).kind

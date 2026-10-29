@@ -36,45 +36,63 @@ class RoutingEngine(private val graphRoot: File) {
     val isLoaded: Boolean get() = hopper != null
     val availableProfiles: List<TravelProfile> get() = loadedProfiles
 
+    /** Directory the graph lives in - the installer unpacks packages here. */
+    fun graphDirectory(): File = graphRoot
+
     /** True when a graph directory exists on disk for this region. */
     fun hasGraph(): Boolean = graphRoot.isDirectory && (graphRoot.listFiles()?.isNotEmpty() == true)
 
     /**
-     * Imports an OSM extract into the on-device graph, or loads an existing graph.
-     * [onProgress] receives coarse phase updates for the UI.
+     * Loads a **pre-built** routing graph from [graphRoot].
+     *
+     * Importing an OSM extract on the phone is deliberately not supported: GraphHopper's OSM reader
+     * depends on `javax.xml.stream`, which Android does not implement, so the class cannot even be
+     * loaded on a device (this was the crash after installing a region). Graphs are built on a
+     * desktop/CI with `tools/build_routing_graph` and shipped as a package instead - which is also
+     * far cheaper: loading Andorra takes well under a second versus several seconds of import and a
+     * ~130 MB memory spike.
+     *
+     * Returns a failure the UI can show instead of throwing, so a bad package can never crash the app.
      */
-    fun importOrLoad(
-        osmFile: File?,
+    fun load(
         profiles: List<TravelProfile> = TravelProfile.entries,
         onProgress: (String) -> Unit = {},
-    ) = lock.withLock {
+    ): Result<Unit> = lock.withLock {
         val existing = hopper
         if (existing != null) {
-            if (existing.profiles.map { it.name }.toSet() == profiles.map { it.id }.toSet()) return@withLock
-            existing.close()
+            if (existing.profiles.map { it.name }.toSet() == profiles.map { it.id }.toSet()) return@withLock Result.success(Unit)
+            runCatching { existing.close() }
             hopper = null
         }
-        graphRoot.mkdirs()
-        // GraphHopper 2.x configures through GraphHopperConfig; setOSMFile no longer exists.
-        val config = GraphHopperConfig()
-            .putObject("graph.location", graphRoot.absolutePath)
-            .putObject("graph.flag_encoders", ENCODING_FLAGS)
-            .setProfiles(buildProfiles(profiles))
-        val importing = osmFile != null && osmFile.exists()
-        if (importing) {
-            onProgress("Reading OpenStreetMap extract")
-            config.putObject("datareader.file", osmFile!!.absolutePath)
-        } else {
-            onProgress("Loading routing graph")
+        if (!hasGraph()) {
+            return@withLock Result.failure(
+                IllegalStateException("No routing graph is installed for this region yet."),
+            )
         }
-
-        val h = GraphHopper().init(config)
-        h.setStoreOnFlush(true)
-        h.setAllowWrites(true)
-        h.importOrLoad()
-        hopper = h
-        loadedProfiles = profiles
-        onProgress("Routing ready")
+        return@withLock try {
+            onProgress("Loading routing graph")
+            val config = GraphHopperConfig()
+                .putObject("graph.location", graphRoot.absolutePath)
+                .putObject("graph.flag_encoders", ENCODING_FLAGS)
+                .setProfiles(buildProfiles(profiles))
+            val h = GraphHopper().init(config)
+            h.setAllowWrites(false)
+            h.importOrLoad()
+            hopper = h
+            loadedProfiles = profiles
+            onProgress("Routing ready")
+            Result.success(Unit)
+        } catch (e: OutOfMemoryError) {
+            Result.failure(IllegalStateException("Not enough memory to load the routing graph for this region.", e))
+        } catch (e: Throwable) {
+            // A packaging problem must surface as a message, never as a crash.
+            Result.failure(
+                IllegalStateException(
+                    "The routing graph could not be loaded (${e.javaClass.simpleName}: ${e.message}).",
+                    e,
+                ),
+            )
+        }
     }
 
     fun close() = lock.withLock {

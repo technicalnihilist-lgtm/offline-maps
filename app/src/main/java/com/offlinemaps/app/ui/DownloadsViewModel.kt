@@ -123,6 +123,18 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
     }
 
     fun start(region: RegionCatalogEntry, pkg: RegionPackage) {
+        if (pkg.type == MapPackageType.ROUTING_OSM) {
+            // Building a routing graph from a raw extract needs javax.xml.stream, which Android does
+            // not implement. Refuse up-front instead of downloading gigabytes that cannot be used.
+            _state.update {
+                it.copy(
+                    banner = "Raw OpenStreetMap extracts cannot be turned into a routing graph on a " +
+                        "phone. Use a pre-built routing package, or build one with " +
+                        "tools/build_routing_graph and add it to the catalogue.",
+                )
+            }
+            return
+        }
         val key = "${region.id}-${pkg.type.name}"
         val expected = _state.value.resolvedSizes[pkg.url] ?: pkg.sizeBytes
         val available = _state.value.availableBytes
