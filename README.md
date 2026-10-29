@@ -6,6 +6,11 @@ downloaded road-network data. No Google Maps, no paid API keys, no account.
 
 Project title: **WorldMap 3D Offline** · App name: **Offline Maps** · package `com.offlinemaps.app`
 
+[![Android CI](https://github.com/technicalnihilist-lgtm/offline-maps/actions/workflows/android.yml/badge.svg)](https://github.com/technicalnihilist-lgtm/offline-maps/actions/workflows/android.yml)
+
+**[⬇ Download the debug APK](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest)** —
+67.5 MB, debug-signed, built by GitHub Actions from this source.
+
 ---
 
 ## Screenshots
@@ -39,24 +44,18 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 10 on-device) | **Implemented and integration-tested** on a real OSM extract |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **61 tests**: 47 pass in this environment, 14 Robolectric-based could not run here (see below) |
-| Release APK | **Not produced in this environment** — see "Build status" |
+| Unit tests | **99 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Debug APK | **Built by CI and published** on the [v1.0.0 release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/tag/v1.0.0) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
 ### Honest limitations
 
-* **No APK is attached.** The sandbox that produced this code could compile Kotlin, run unit tests
-  and run a real GraphHopper routing integration test, but `mergeDebugGlobalSynthetics` (the D8
-  dexing step over the GraphHopper dependency graph) repeatedly exceeded the environment's
-  285-second per-command limit and 2 GB RAM, and the build workspace was then lost when the sandbox
-  pod was recycled. Nothing in this repo claims an APK exists. `docs/TESTING.md` records exactly
-  which commands were run and what they returned.
-* **14 Robolectric tests could not execute here.** They need Robolectric's native SQLite runtime,
-  which aborts (SIGABRT) under this sandbox's gVisor kernel. They are committed and will run on a
-  normal Linux CI runner (the workflow does this).
-* **Online tile fetching was not verified from this environment.** The build sandbox's egress proxy
-  blocks `tiles.openfreemap.org` and `download.geofabrik.de`, so live tile/region downloads could
-  not be exercised end to end. The code paths are unit-tested against a local HTTP server instead.
+* **The APK is debug-signed.** Fine for sideloading and testing; sign with your own key before
+  distributing (see `docs/BUILDING.md`).
+* **Nothing has been run on a physical device or an emulator.** This environment had no
+  `/dev/kvm` and no GPU, so map rendering, GPS, permissions, airplane mode and voice playback are
+  implemented and their logic is unit-tested, but the end-to-end device behaviour is unverified.
+  `docs/TESTING.md` carries the manual checklist to run on a phone.
 * **Building heights are partly estimated.** Where OpenStreetMap has `height`/`levels` we use them;
   otherwise the style falls back to 3 m per level and then 4 m. These are estimates and the UI does
   not pretend otherwise. There is no photorealistic 3D city model anywhere in this app.
@@ -186,13 +185,16 @@ explicitly excluded (`data_extraction_rules.xml`).
 See [`docs/TESTING.md`](docs/TESTING.md) for the full matrix, what was executed, what passed, and
 what could not run here. Summary of the automated suites:
 
-* `core/common` — spherical geometry, cross-track distance, tile maths, formatters (13 tests)
+* `core/common` — spherical geometry, cross-track distance, tile maths, formatters (**28**)
 * `core/offline` — download engine against MockWebServer: resume, 200-ignoring-Range, checksum
-  mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry (11 tests)
+  mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry (**21**)
 * `core/routing` — navigation tracker (off-route, arrival, snapping), guidance announcer, instruction
-  mapper, and a **real GraphHopper integration test** on the Andorra extract (17 tests)
-* `core/search` — FTS4 index, gzip pack import, prefix/case/injection-safe queries, nearby (12)
-* `core/data` — Room repositories and settings (10)
+  mapper, and a **real GraphHopper integration test** on the Andorra extract (**28**)
+* `core/search` — FTS4 index, gzip pack import, prefix/case/multi-word/injection-safe queries,
+  nearby, region delete (**12**)
+* `core/data` — Room repositories and settings (**10**)
+
+Total: **99 tests, 0 failures**, executed on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35).
 
 ---
 
