@@ -42,7 +42,7 @@ This section is first on purpose. Read it before anything else.
 | Offline region downloads (MapLibre offline store), MBTiles import | **Implemented** |
 | Resumable HTTP downloads with checksum verification, pause/cancel/retry | **Implemented and unit-tested** |
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
-| Offline routing (GraphHopper 10 on-device) | **Implemented and integration-tested** on a real OSM extract |
+| Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
 | Unit tests | **99 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [v1.0.0 release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/tag/v1.0.0) |
@@ -62,9 +62,13 @@ This section is first on purpose. Read it before anything else.
 * **Routing speed models are simplified.** GraphHopper 10 requires an explicit custom model per
   profile; ours caps speed by road class and honours `maxspeed` when tagged. It is not a
   lane-level traffic model.
-* **Large extracts cannot be imported on a phone.** A whole-country PBF (India is ~1.4 GB) will
-  exhaust phone memory during GraphHopper import. Small regional extracts work (the bundled Andorra
-  sample imports in seconds). This is documented in the Downloads screen copy too.
+* **A phone cannot build a routing graph from a raw OSM extract.** GraphHopper's OSM reader depends
+  on `javax.xml.stream`, which Android does not implement, so the reader class cannot even be loaded
+  on a device. (This was the v1.0.0 crash after installing a region.) The app therefore loads a
+  pre-built graph: `app/src/main/assets/routing_andorra.zip` is built from a real Andorra extract by
+  `tools/build_routing_graph.sh`. To route in another region you build a graph there and ship or host
+  it as a package; the Downloads screen refuses raw extracts up-front rather than pulling gigabytes
+  that could not be installed.
 * **No satellite imagery.** No appropriately licensed global imagery source was integrated, so the
   app does not offer one rather than shipping a broken layer.
 

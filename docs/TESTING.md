@@ -66,28 +66,14 @@ detail"; at the route origin the next manoeuvre is the first turn, not the depar
 
 ## Offline routing — verified for real
 
-`RoutingEngineIntegrationTest` is not a mock. It:
+The v1.0.0 crash after installing a region, the diagnosis, and the architectural fix are written up in
+[`CRASH-FIX-v1.0.1.md`](CRASH-FIX-v1.0.1.md). Short version: no modern GraphHopper can import OSM on
+Android (its reader needs `javax.xml.stream`), so the app now loads a **pre-built graph** shipped in
+`app/src/main/assets/routing_andorra.zip`.
 
-1. reads `core/routing/src/test/resources/andorra.osm.pbf` (553 KB, real OSM extract, ODbL),
-2. imports it with GraphHopper 10 into a graph directory,
-3. routes Andorra la Vella → Escaldes-Engordany for car, bike and foot,
-4. asserts a real road distance, positive duration, >20 geometry points, ≥3 manoeuvres, OSM street
-   names on the instructions, and monotonically increasing manoeuvre indices,
-5. closes the engine and **reloads the graph from disk without the PBF**, then routes again.
-
-Measured during the probe run that validated the API before the test was written:
-
-```
-IMPORT_MS=13812
-car  dist_m=5666  time_s=308  pts=141  instr=17
-foot dist_m=5627  time_s=4051 pts=134  instr=17
-bike dist_m=5627  time_s=962  pts=134  instr=17
-RELOAD_MS=299
-reload route ok=true dist=5666
-```
-
-Instructions produced from real data: `sign=-2 name='Carrer Mossèn Enric Marfany'`,
-`sign=2 name='Carrer Mossèn Tremosa'`.
+`RoutingEngineIntegrationTest` unpacks that exact asset, calls `engine.load()`, routes car/bike/foot
+across Andorra, and asserts real distances, manoeuvres, OSM street names and a missing-graph failure.
+`RoutingEngineAndroidTest` repeats it under Robolectric's real android-all runtime.
 
 ## What is still NOT tested
 
