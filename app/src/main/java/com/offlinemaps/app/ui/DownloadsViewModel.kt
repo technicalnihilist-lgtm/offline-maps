@@ -279,9 +279,10 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
         status: OfflineRegionController.RegionStatus,
     ) {
         viewModelScope.launch {
-            if (status.error != null) {
-                _state.update { it.copy(messages = it.messages + (key to status.error)) }
-                locator.downloadRecords.updateProgress(key, DownloadStatus.FAILED, status.completedResourceSize, status.error)
+            val error = status.error
+            if (error != null) {
+                _state.update { it.copy(messages = it.messages + (key to error)) }
+                locator.downloadRecords.updateProgress(key, DownloadStatus.FAILED, status.completedResourceSize, error)
                 return@launch
             }
 
