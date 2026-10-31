@@ -9,7 +9,11 @@ Project title: **WorldMap 3D Offline** · App name: **Offline Maps** · package 
 [![Android CI](https://github.com/technicalnihilist-lgtm/offline-maps/actions/workflows/android.yml/badge.svg)](https://github.com/technicalnihilist-lgtm/offline-maps/actions/workflows/android.yml)
 
 **[⬇ Download the debug APK](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest)** —
-67.5 MB, debug-signed, built by GitHub Actions from this source.
+debug-signed, built by GitHub Actions from this source.
+
+**[Open the browser demo](docs/web-demo.html)** — a single HTML file with the same generated 3D
+style, the same 256-place search pack and the same tile arithmetic. Useful for seeing the map
+without installing anything; offline caching and routing stay on the device.
 
 ---
 

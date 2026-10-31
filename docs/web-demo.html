@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Offline Maps — 3D map demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f7f4ee;
+    --surface: #fffdf9;
+    --surface-2: #f1ece2;
+    --border: rgba(28, 25, 20, 0.12);
+    --border-strong: rgba(28, 25, 20, 0.22);
+    --ink: #1c1914;
+    --ink-dim: #6b6459;
+    --accent: #0e7490;
+    --accent-soft: rgba(14, 116, 144, 0.10);
+    --accent-2: #9a3412;
+    --ok: #15803d;
+    --warn: #b45309;
+    --bad: #b91c1c;
+    --shadow: 0 1px 2px rgba(28,25,20,.06), 0 8px 24px rgba(28,25,20,.10);
+    --radius: 16px;
+    --font: "IBM Plex Sans", ui-sans-serif, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --nav-h: 62px;
+  }
+  html[data-theme="dark"] {
+    --paper: #0f1419;
+    --surface: #161d24;
+    --surface-2: #1d262e;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.18);
+    --ink: #e8eef3;
+    --ink-dim: #93a1ad;
+    --accent: #38bdf8;
+    --accent-soft: rgba(56, 189, 248, 0.12);
+    --accent-2: #fb923c;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.45);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; height: 100dvh; margin: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--paper);
+    color: var(--ink);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #map { position: fixed; inset: 0; }
+  .maplibregl-ctrl-attrib { font-family: var(--mono); font-size: 10px; }
+  .maplibregl-ctrl-bottom-left, .maplibregl-ctrl-bottom-right { display: none; }
+
+  /* ---------- floating chrome ---------- */
+  .chrome { position: fixed; z-index: 5; }
+
+  .topbar {
+    top: 0; left: 0; right: 0;
+    padding: 14px 14px 0;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+
+  .searchbar {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    padding: 11px 16px;
+    max-width: 560px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .searchbar svg { flex: none; opacity: .55; }
+  .searchbar input {
+    flex: 1; min-width: 0;
+    border: 0; outline: 0; background: transparent;
+    font: 500 15px/1.2 var(--font);
+    color: var(--ink);
+  }
+  .searchbar input::placeholder { color: var(--ink-dim); font-weight: 400; }
+  .kbd {
+    font: 500 10px/1 var(--mono);
+    color: var(--ink-dim);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 5px;
+  }
+
+  .chips { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 500 11px/1 var(--mono);
+    letter-spacing: .02em;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink-dim);
+    box-shadow: 0 1px 2px rgba(0,0,0,.05);
+    white-space: nowrap;
+  }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-dim); }
+  .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .chip.ok .dot { background: var(--ok); }
+  .chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
+  .chip.warn .dot { background: var(--warn); }
+  .chip.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 34%, transparent); }
+  .chip.bad .dot { background: var(--bad); }
+
+  /* right-hand map controls */
+  .controls {
+    right: 14px;
+    top: 50%;
+    transform: translateY(-58%);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .ctl {
+    width: 44px; height: 44px;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    box-shadow: var(--shadow);
+    color: var(--ink);
+    cursor: pointer;
+    transition: transform .12s ease, background .12s ease, color .12s ease;
+  }
+  .ctl:hover { background: var(--surface-2); }
+  .ctl:active { transform: scale(.94); }
+  .ctl.active { background: var(--accent); color: #fff; border-color: transparent; }
+  html[data-theme="dark"] .ctl.active { color: #06121a; }
+  .ctl svg { width: 20px; height: 20px; }
+  .ctl .label { font: 600 10px/1 var(--mono); letter-spacing: .04em; }
+  body.sheet-open .controls { opacity: 0; pointer-events: none; }
+  .controls { transition: opacity .18s ease; }
+
+  /* ---------- bottom sheet + nav ---------- */
+  .sheet {
+    left: 0; right: 0; bottom: var(--nav-h);
+    max-height: 62vh;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -12px 40px rgba(0,0,0,.16);
+    display: flex; flex-direction: column;
+    transform: translateY(calc(100% + 12px));
+    transition: transform .28s cubic-bezier(.22,.8,.28,1), opacity .2s ease, visibility .2s;
+    z-index: 6;
+    /* Fully removed from the page when closed: it must not extend the scroll area, and it
+       must not be reachable by keyboard or a screen reader while hidden. */
+    opacity: 0;
+    visibility: hidden;
+  }
+  .sheet.open { transform: translateY(0); opacity: 1; visibility: visible; }
+  .sheet__grab {
+    width: 42px; height: 4px; border-radius: 999px;
+    background: var(--border-strong);
+    margin: 9px auto 4px;
+  }
+  .sheet__head {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 4px 18px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sheet__head h2 {
+    font: 600 15px/1.2 var(--font);
+    margin: 0; letter-spacing: -.01em;
+  }
+  .sheet__head .meta {
+    font: 500 10px/1 var(--mono);
+    color: var(--ink-dim);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .sheet__body { overflow-y: auto; padding: 10px 14px 18px; -webkit-overflow-scrolling: touch; }
+
+  nav.bottom {
+    left: 0; right: 0; bottom: 0;
+    height: var(--nav-h);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    z-index: 7;
+  }
+  .tab {
+    border: 0; background: transparent; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    color: var(--ink-dim);
+    font: 500 10px/1 var(--mono);
+    letter-spacing: .03em;
+    padding: 0;
+  }
+  .tab svg { width: 21px; height: 21px; }
+  .tab[aria-selected="true"] { color: var(--accent); }
+  .tab[aria-selected="true"] .ind {
+    width: 16px; height: 2px; border-radius: 2px; background: var(--accent); margin-top: 1px;
+  }
+
+  /* ---------- content bits ---------- */
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 8px;
+    border-radius: 12px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .row:hover { background: var(--surface-2); }
+  .row + .row { border-top: 1px solid var(--border); border-radius: 0; }
+  .row__main { flex: 1; min-width: 0; }
+  .row__title { font: 600 14px/1.3 var(--font); margin: 0; }
+  .row__sub { font: 400 12px/1.35 var(--font); color: var(--ink-dim); margin: 2px 0 0; }
+  .row__meta { font: 500 10px/1.4 var(--mono); color: var(--ink-dim); text-align: right; white-space: nowrap; }
+  .badge {
+    font: 600 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    padding: 4px 7px; border-radius: 5px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .badge.muted { background: var(--surface-2); color: var(--ink-dim); }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+
+  .section-label {
+    display: flex; align-items: center; gap: 8px;
+    font: 600 10px/1 var(--mono);
+    letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 16px 8px 6px;
+  }
+  .section-label::before {
+    content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--accent);
+  }
+  .note {
+    font: 400 12.5px/1.55 var(--font);
+    color: var(--ink-dim);
+    margin: 6px 8px 10px;
+  }
+  .note strong { color: var(--ink); font-weight: 600; }
+  code {
+    font: 500 11.5px/1.4 var(--mono);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 1px 5px; border-radius: 5px;
+    overflow-wrap: anywhere;
+  }
+  .btn {
+    font: 600 12.5px/1 var(--font);
+    padding: 9px 14px; border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--ink);
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--surface-2); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  html[data-theme="dark"] .btn.primary { color: #06121a; }
+  .btn.small { padding: 6px 10px; font-size: 11.5px; }
+  .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+
+  .field { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 8px; }
+  .field + .field { border-top: 1px solid var(--border); }
+  .field__label { font: 500 13px/1.3 var(--font); }
+  .field__hint { font: 400 11.5px/1.4 var(--font); color: var(--ink-dim); margin-top: 2px; }
+  .switch { position: relative; width: 44px; height: 26px; flex: none; }
+  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .switch span {
+    position: absolute; inset: 0; border-radius: 999px;
+    background: var(--border-strong); transition: background .18s ease;
+  }
+  .switch span::after {
+    content: ""; position: absolute; top: 3px; left: 3px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    transition: transform .18s ease;
+  }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(18px); }
+  input[type="range"] { width: 130px; accent-color: var(--accent); }
+
+  .empty {
+    text-align: center; padding: 26px 16px; color: var(--ink-dim);
+    font: 400 13px/1.6 var(--font);
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: calc(var(--nav-h) + 14px);
+    transform: translate(-50%, 20px);
+    background: var(--ink); color: var(--paper);
+    font: 500 12.5px/1.3 var(--font);
+    padding: 10px 16px; border-radius: 999px;
+    box-shadow: var(--shadow);
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    z-index: 20; max-width: min(90vw, 460px); text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  .banner {
+    position: fixed; left: 14px; right: 14px; top: 96px;
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+    border-left: 3px solid var(--warn);
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: var(--shadow);
+    font: 400 12.5px/1.55 var(--font);
+    color: var(--ink);
+    z-index: 9; display: none;
+  }
+  .banner.show { display: block; }
+  .banner strong { font-weight: 600; }
+  .banner .close {
+    position: absolute; top: 8px; right: 10px;
+    border: 0; background: transparent; color: var(--ink-dim);
+    font: 500 16px/1 var(--mono); cursor: pointer;
+  }
+
+  .pin-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+    flex: none;
+  }
+
+  @media (max-width: 560px) {
+    .controls { top: auto; bottom: calc(var(--nav-h) + 12px); transform: none; right: 12px; }
+    .sheet { max-height: 58vh; }
+    .chips { justify-content: flex-start; overflow-x: auto; padding-bottom: 2px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="chrome topbar">
+  <div class="searchbar">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="search" type="search" placeholder="Search 256 places in Andorra — towns, villages, POIs" autocomplete="off" spellcheck="false">
+    <span class="kbd">/</span>
+  </div>
+  <div class="chips">
+    <span class="chip" id="chip-mode"><span class="dot"></span><span id="chip-mode-text">3D</span></span>
+    <span class="chip" id="chip-coverage"><span class="dot"></span>Andorra · bundled</span>
+    <span class="chip" id="chip-net"><span class="dot"></span>checking…</span>
+  </div>
+</div>
+
+<div class="chrome controls">
+  <button class="ctl" id="zoom-in" title="Zoom in" aria-label="Zoom in">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button class="ctl" id="zoom-out" title="Zoom out" aria-label="Zoom out">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>
+  </button>
+  <button class="ctl" id="compass" title="Reset bearing" aria-label="Reset bearing">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 15 12l-3 8.5L9 12z"/></svg>
+  </button>
+  <button class="ctl" id="locate" title="Show my location" aria-label="Show my location">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3.2M12 18.8V22M2 12h3.2M18.8 12H22"/></svg>
+  </button>
+  <button class="ctl" id="toggle-3d" title="Toggle 2D / 3D">
+    <span class="label">3D</span>
+  </button>
+</div>
+
+<div class="banner" id="banner">
+  <button class="close" id="banner-close" aria-label="Dismiss">×</button>
+  <strong>Map tiles did not load.</strong>
+  <span id="banner-detail">The demo streams vector tiles from OpenFreeMap, so it needs a network connection. Everything else on this page (search, saved places, size estimates) still works.</span>
+</div>
+
+<div class="sheet" id="sheet">
+  <div class="sheet__grab"></div>
+  <div class="sheet__head">
+    <h2 id="sheet-title">Explore</h2>
+    <span class="meta" id="sheet-meta"></span>
+  </div>
+  <div class="sheet__body" id="sheet-body"></div>
+</div>
+
+<nav class="bottom" role="tablist">
+  <button class="tab" role="tab" data-tab="explore" aria-selected="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>
+    <span>Explore</span><span class="ind"></span>
+  </button>
+  <button class="tab" role="tab" data-tab="navigate" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 18 12 5l8 13"/><circle cx="12" cy="5" r="1.6"/></svg>
+    <span>Navigate</span><span class="ind"></span>
+  </button>
+  <button class="tab" role="tab" data-tab="downloads" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 4v10m0 0 3.5-3.5M12 14 8.5 10.5"/><path d="M5 17v2.5h14V17"/></svg>
+    <span>Downloads</span><span class="ind"></span>
+  </button>
+  <button class="tab" role="tab" data-tab="saved" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 4.5 2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.7-4.8 2.7 1-5.4-4-3.8 5.4-.7z"/></svg>
+    <span>Saved</span><span class="ind"></span>
+  </button>
+  <button class="tab" role="tab" data-tab="settings" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="2.6"/><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4 6 18M18 18l-1.6-1.6M7.6 7.6 6 6"/></svg>
+    <span>Settings</span><span class="ind"></span>
+  </button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------------------------------
+   Offline Maps — browser demo.
+
+   This page is a companion to the Android app in the same repository. It shares the app's
+   generated-style approach (no hosted style file: the layer list is built here, exactly as
+   MapStyleFactory.kt does on the device), the same places pack, and the same region catalogue.
+
+   What is genuinely the same as the app:
+     · the vector style, 3D building extrusions and terrain DEM
+     · the search data (256 real OSM places in Andorra) and the ranking
+     · the tile-count and download-size arithmetic (TileMath / TileRegionEstimator)
+     · saved places, stored locally in this browser
+
+   What is device-only, and is labelled as such in the UI: caching tiles into an offline
+   store, and turn-by-turn routing (a phone cannot build a routing graph, so the app loads a
+   pre-built one).
+   ------------------------------------------------------------------------------------------ */
+
+const PLACES = [{"n":"Andorra la Vella","t":"town","y":42.506939,"x":1.521247},{"n":"Ordino","t":"town","y":42.55615,"x":1.533494},{"n":"Aix\u00e0s","t":"hamlet","y":42.482604,"x":1.464149},{"n":"Aubiny\u00e0","t":"village","y":42.453623,"x":1.492323},{"n":"Juberri","t":"village","y":42.439174,"x":1.491782},{"n":"Nagol","t":"village","y":42.468476,"x":1.498811},{"n":"Any\u00f3s","t":"hamlet","y":42.534361,"x":1.525483},{"n":"els Vilars","t":"hamlet","y":42.516829,"x":1.541383},{"n":"Bixessarri","t":"village","y":42.483629,"x":1.456681},{"n":"el Tarter","t":"village","y":42.580015,"x":1.649057},{"n":"Prats","t":"village","y":42.561477,"x":1.594427},{"n":"Sispony","t":"hamlet","y":42.533872,"x":1.515627},{"n":"els Plans","t":"hamlet","y":42.582462,"x":1.631677},{"n":"l\u2019Aldosa de Canillo","t":"hamlet","y":42.579555,"x":1.627815},{"n":"Sant Pere","t":"village","y":42.579806,"x":1.654634},{"n":"Canillo","t":"town","y":42.566707,"x":1.59803},{"n":"Sorn\u00e1s","t":"village","y":42.564932,"x":1.527403},{"n":"Sant Joan de Caselles","t":"hamlet","y":42.571097,"x":1.616325},{"n":"l\u2019Aldosa de Canillo","t":"hamlet","y":42.543933,"x":1.523002},{"n":"el Serrat","t":"village","y":42.61889,"x":1.54134},{"n":"Ransol","t":"village","y":42.581294,"x":1.635146},{"n":"el Pui","t":"hamlet","y":42.547699,"x":1.515555},{"n":"Vila","t":"village","y":42.531854,"x":1.566625},{"n":"Erts","t":"village","y":42.561713,"x":1.49689},{"n":"Ansalonga","t":"village","y":42.569022,"x":1.522153},{"n":"Engordany","t":"village","y":42.513539,"x":1.538208},{"n":"Arinsal","t":"village","y":42.572082,"x":1.484403},{"n":"Sant Juli\u00e0 de L\u00f2ria","t":"town","y":42.466659,"x":1.492055},{"n":"les Bons","t":"hamlet","y":42.538525,"x":1.58447},{"n":"Puiol del Piu","t":"hamlet","y":42.565555,"x":1.491991},{"n":"Fontaneda","t":"village","y":42.453776,"x":1.463136},{"n":"Santa Coloma","t":"village","y":42.498368,"x":1.505961},{"n":"Pal","t":"village","y":42.546556,"x":1.475551},{"n":"Xixerella","t":"village","y":42.553574,"x":1.48628},{"n":"Aixovall","t":"village","y":42.476535,"x":1.491455},{"n":"Llorts","t":"village","y":42.596264,"x":1.526185},{"n":"Soldeu","t":"village","y":42.576944,"x":1.667167},{"n":"Mas de Ribafeta","t":"hamlet","y":42.570774,"x":1.493038},{"n":"la Cortinada","t":"village","y":42.575568,"x":1.519345},{"n":"Llumeneres","t":"village","y":42.472782,"x":1.511686},{"n":"Arans","t":"village","y":42.582531,"x":1.518069},{"n":"La Massana","t":"town","y":42.544201,"x":1.516375},{"n":"Esc\u00e0s","t":"hamlet","y":42.546862,"x":1.508999},{"n":"Segudet","t":"village","y":42.557064,"x":1.538057},{"n":"Encamp","t":"town","y":42.53597,"x":1.583661},{"n":"les Escaldes","t":"town","y":42.509002,"x":1.540407},{"n":"Aixirivall","t":"village","y":42.462,"x":1.501617},{"n":"Certers","t":"village","y":42.47601,"x":1.508081},{"n":"Meritxell","t":"village","y":42.553633,"x":1.59064},{"n":"Andorra","t":"country","y":42.540717,"x":1.573203},{"n":"Super Pal","t":"hamlet","y":42.542951,"x":1.473491},{"n":"Grau Roig","t":"village","y":42.536899,"x":1.701791},{"n":"el Vilar","t":"hamlet","y":42.574554,"x":1.519302},{"n":"Coll d'Ordino","t":"poi","y":42.554968,"x":1.572221},{"n":"Estructures Autogeneradores","t":"poi","y":42.568997,"x":1.587808},{"n":"el Forn","t":"hamlet","y":42.562121,"x":1.602849},{"n":"Lloc de Repos de Redort","t":"poi","y":42.559088,"x":1.556664},{"n":"el Cortalet","t":"hamlet","y":42.538965,"x":1.526383},{"n":"el Bosquet","t":"hamlet","y":42.538882,"x":1.528529},{"n":"Mas d'en Soler","t":"hamlet","y":42.577612,"x":1.518011},{"n":"Hotel Xalet Besoli","t":"poi","y":42.568492,"x":1.489601},{"n":"bp","t":"poi","y":42.57958,"x":1.640062},{"n":"Pla\u00e7a del Poble","t":"locality","y":42.543573,"x":1.522718},{"n":"Hotel Nordic","t":"poi","y":42.577684,"x":1.650679},{"n":"Hotel la Coma","t":"poi","y":42.555837,"x":1.535291},{"n":"Auditori Nacional d'Andorra","t":"poi","y":42.556918,"x":1.534774},{"n":"les Salines","t":"hamlet","y":42.610325,"x":1.536691},{"n":"Camping Xixerella","t":"poi","y":42.551807,"x":1.488077},{"n":"Sant Cristofol d'Anyos","t":"poi","y":42.534981,"x":1.52459},{"n":"Sant Rom\u00e0 d'Auviny\u00e0","t":"poi","y":42.453029,"x":1.496537},{"n":"Parking Comunal de l'Aldosa","t":"poi","y":42.543375,"x":1.523425},{"n":"Hotel Magic Ski","t":"poi","y":42.547435,"x":1.513563},{"n":"Hotel Font","t":"poi","y":42.54698,"x":1.513855},{"n":"Hotel Magic","t":"poi","y":42.547138,"x":1.515057},{"n":"Hotel Marco Polo","t":"poi","y":42.542635,"x":1.517082},{"n":"Les Fontetes","t":"poi","y":42.546746,"x":1.514233},{"n":"Les Fontetes","t":"poi","y":42.546663,"x":1.514507},{"n":"Hotel Burna","t":"poi","y":42.53664,"x":1.516799},{"n":"Compra Be","t":"poi","y":42.546613,"x":1.521966},{"n":"Residential de l'Aldosa","t":"poi","y":42.544286,"x":1.523116},{"n":"Les Pardines","t":"poi","y":42.530315,"x":1.59966},{"n":"Surf","t":"poi","y":42.572508,"x":1.483202},{"n":"Red X","t":"poi","y":42.569504,"x":1.489257},{"n":"Casa d'Areny-Plandolit","t":"poi","y":42.556564,"x":1.534053},{"n":"Hotel St. Gothard","t":"poi","y":42.565867,"x":1.490434},{"n":"Apartments St. Moritz","t":"poi","y":42.571801,"x":1.484125},{"n":"St. Moritz Ski Hire","t":"poi","y":42.571847,"x":1.48407},{"n":"Hotel Solana","t":"poi","y":42.571455,"x":1.485847},{"n":"Hotel Princesa Parc","t":"poi","y":42.573925,"x":1.482144},{"n":"Hotel Xalet Verdu","t":"poi","y":42.574234,"x":1.483029},{"n":"Hotel Patagonia","t":"poi","y":42.577901,"x":1.478716},{"n":"Hotel Ayma","t":"poi","y":42.573292,"x":1.483173},{"n":"Resedencia Daina","t":"poi","y":42.5632,"x":1.48974},{"n":"Hotel Arinsal","t":"poi","y":42.573768,"x":1.482687},{"n":"Restaurant Panoramix","t":"poi","y":42.57335,"x":1.47065},{"n":"Esports Rossell","t":"poi","y":42.572433,"x":1.471633},{"n":"Pic Negre","t":"poi","y":42.572833,"x":1.470867},{"n":"Lift Pass Office","t":"poi","y":42.572933,"x":1.470867},{"n":"Souvenir Shop at the Top of Gondola","t":"poi","y":42.573017,"x":1.471317},{"n":"Supermarket Nou","t":"poi","y":42.5697,"x":1.487517},{"n":"Restaurant Granja Del Poble (Internet Caf\u00e9)","t":"poi","y":42.5698,"x":1.487583},{"n":"Bar El Bosc","t":"poi","y":42.569583,"x":1.487883},{"n":"Restaurant Timotea","t":"poi","y":42.569517,"x":1.4878},{"n":"Ski School","t":"poi","y":42.573367,"x":1.47335},{"n":"Bar/Restaurant 360","t":"poi","y":42.573433,"x":1.4831},{"n":"Black Bull Bar","t":"poi","y":42.572117,"x":1.4837},{"n":"Restaurant/Bar Mollies","t":"poi","y":42.572633,"x":1.484017},{"n":"Restaurant/Bar Ciscos","t":"poi","y":42.572467,"x":1.484033},{"n":"Cau Bar","t":"poi","y":42.5733,"x":1.4837},{"n":"Bar Quo Vadis","t":"poi","y":42.573183,"x":1.483317},{"n":"Steak House","t":"poi","y":42.564139,"x":1.665216},{"n":"Cubil","t":"poi","y":42.532077,"x":1.695954},{"n":"Solanelles","t":"poi","y":42.54236,"x":1.661137},{"n":"l'Anella d'Ordino","t":"poi","y":42.632388,"x":1.496029},{"n":"Collada D'Enradort","t":"poi","y":42.538857,"x":1.661442},{"n":"Roc de les Bruixes","t":"poi","y":42.554621,"x":1.616347},{"n":"el Forn","t":"poi","y":42.554736,"x":1.6162},{"n":"Tosa de la Llosada","t":"poi","y":42.548963,"x":1.647147},{"n":"Portella","t":"poi","y":42.552815,"x":1.628305},{"n":"C. de les Solanelles","t":"poi","y":42.546489,"x":1.658923},{"n":"Cortals","t":"poi","y":42.542649,"x":1.661098},{"n":"Tossa Dels Espiolets","t":"poi","y":42.554566,"x":1.65345},{"n":"Riba Escorxada","t":"poi","y":42.567823,"x":1.64126},{"n":"El Mercal Del Pi","t":"poi","y":42.567946,"x":1.641111},{"n":"Gall De Bosc","t":"poi","y":42.564866,"x":1.663022},{"n":"Espiolets","t":"poi","y":42.564576,"x":1.664156},{"n":"Pla de les Pedres - Andorre","t":"poi","y":42.553663,"x":1.680599},{"n":"River","t":"poi","y":42.454323,"x":1.48639},{"n":"Leclerc Punt de Trobada","t":"poi","y":42.447119,"x":1.481579},{"n":"Hotel Himalaya","t":"poi","y":42.5768,"x":1.667522},{"n":"Hotel Piolets","t":"poi","y":42.576561,"x":1.667182},{"n":"Hotel Bruxelles","t":"poi","y":42.576807,"x":1.666509},{"n":"Bruxellles Restaurant","t":"poi","y":42.576744,"x":1.666665},{"n":"Torre dals Morus","t":"poi","y":42.539282,"x":1.587204},{"n":"La Dama del Llac","t":"poi","y":42.522657,"x":1.571697},{"n":"Sant Joan de Caselles","t":"poi","y":42.570774,"x":1.607753},{"n":"Borda del Tremat","t":"poi","y":42.534669,"x":1.583259},{"n":"L'era del Rossell","t":"poi","y":42.55396,"x":1.589753},{"n":"Refugi de Coms de Jan","t":"poi","y":42.618441,"x":1.638832},{"n":"Refugi del Pla de l'Estany","t":"poi","y":42.594036,"x":1.460552},{"n":"Cabane Banyell planells de rialp - andorre","t":"poi","y":42.646944,"x":1.550833},{"n":"Refugi de l'Angonella","t":"poi","y":42.607951,"x":1.496084},{"n":"Cabane Estall Serrer - Andorre","t":"poi","y":42.4836,"x":1.6122},{"n":"Cabane Fonts - andorre","t":"poi","y":42.590136,"x":1.478949},{"n":"Cabane Portella","t":"poi","y":42.571998,"x":1.720605},{"n":"Refugi de la Comapedrosa","t":"poi","y":42.578933,"x":1.449364},{"n":"Cabane Vall del Riu - andorre","t":"poi","y":42.595641,"x":1.613134},{"n":"Cabane Borda Sorteny - andorre","t":"poi","y":42.622608,"x":1.564145},{"n":"Cabana de la Comapedrosa","t":"poi","y":42.581368,"x":1.446805},{"n":"Cabana de l'Estany Forcat","t":"poi","y":42.598249,"x":1.450007},{"n":"Refuge de Fontverd - andorre","t":"poi","y":42.492084,"x":1.59453},{"n":"Cabane Arcalis ou Pleta Castellar - Andorre","t":"poi","y":42.638262,"x":1.511413},{"n":"Cabana Sorda","t":"poi","y":42.61143,"x":1.672383},{"n":"Refugi de l'Illa","t":"poi","y":42.495026,"x":1.656072},{"n":"Refugi de Perafita","t":"poi","y":42.479727,"x":1.578252},{"n":"Cabana Estanya","t":"poi","y":42.4903,"x":1.6483},{"n":"Refuge de Rialp - andorre","t":"poi","y":42.640352,"x":1.561314},{"n":"Cabane de La Farga - andorre","t":"poi","y":42.489837,"x":1.607201},{"n":"Refuge des Agols - andorre","t":"poi","y":42.511083,"x":1.608928},{"n":"Refuge de Coma Obaga - andorre","t":"poi","y":42.606777,"x":1.550499},{"n":"Pla de les Pedres - Andorre","t":"poi","y":42.553673,"x":1.67888},{"n":"Cabane Pleta Serrera - Andorre","t":"poi","y":42.621126,"x":1.579773},{"n":"Cabana del Serrat de la  Barracota","t":"poi","y":42.482228,"x":1.629367},{"n":"Refugi del Siscar\u00f3","t":"poi","y":42.594873,"x":1.706019},{"n":"Refugi dels Estanys de la Pera","t":"poi","y":42.456724,"x":1.598442},{"n":"Pla de les Pedres - Andorre","t":"poi","y":42.553673,"x":1.67888},{"n":"Cabana del Riu dels Orris","t":"poi","y":42.485021,"x":1.639795},{"n":"Cabane Riba Escorxada - andorre","t":"poi","y":42.565914,"x":1.640739},{"n":"Refuge des Agols - andorre","t":"poi","y":42.511083,"x":1.608928},{"n":"Refuge de Fontverd - andorre","t":"poi","y":42.492084,"x":1.59453},{"n":"Cabana de Setut","t":"poi","y":42.482563,"x":1.642281},{"n":"Cabane de La Farga - andorre","t":"poi","y":42.489837,"x":1.607201},{"n":"Refugie de Prat Primer","t":"poi","y":42.478496,"x":1.550279},{"n":"Hotel Euro Esqui","t":"poi","y":42.579407,"x":1.659088},{"n":"Sporthotel Village","t":"poi","y":42.576108,"x":1.669191},{"n":"Hotel Del Clos","t":"poi","y":42.58032,"x":1.64923},{"n":"Hotel Sport Hermitage","t":"poi","y":42.575992,"x":1.670407},{"n":"Hotel Himalaia Soldeu","t":"poi","y":42.576971,"x":1.667332},{"n":"Hotel Naudi","t":"poi","y":42.577039,"x":1.666201},{"n":"Hotel Sport","t":"poi","y":42.576019,"x":1.669499},{"n":"Apartments Crest","t":"poi","y":42.542232,"x":1.73083},{"n":"Tossa del Sirvent","t":"locality","y":42.462469,"x":1.60082},{"n":"Canals de Rac\u00f3","t":"locality","y":42.45279,"x":1.564676},{"n":"Calm Borrut","t":"locality","y":42.454182,"x":1.557202},{"n":"Clots del Port","t":"locality","y":42.46249,"x":1.594435},{"n":"Rocs Blancs","t":"locality","y":42.463439,"x":1.619772},{"n":"Canals de la Pera","t":"locality","y":42.458301,"x":1.602433},{"n":"Policia Andorrana","t":"poi","y":42.50755,"x":1.538178},{"n":"Hola Andorra self catering ski chalet","t":"poi","y":42.574134,"x":1.481828},{"n":"Children's play ground","t":"poi","y":42.57159,"x":1.4834},{"n":"Les Closes","t":"poi","y":42.508416,"x":1.537057},{"n":"La Plazzeta","t":"poi","y":42.508392,"x":1.536791},{"n":"Pizzeria Uruguayana","t":"poi","y":42.463069,"x":1.491152},{"n":"Centre Comercial Sant Eloi","t":"poi","y":42.457821,"x":1.487097},{"n":"C\u00e0mping Valira","t":"poi","y":42.501948,"x":1.514951},{"n":"Hotel Sant Eloi","t":"poi","y":42.457782,"x":1.486992},{"n":"Hotel Rutllan","t":"poi","y":42.547379,"x":1.513196},{"n":"Garralla","t":"poi","y":42.546525,"x":1.513732},{"n":"info","t":"poi","y":42.54658,"x":1.514333},{"n":"Chalet Casale","t":"poi","y":42.579372,"x":1.652945},{"n":"Dylan's","t":"poi","y":42.579864,"x":1.651803},{"n":"Hotel Del Tarter","t":"poi","y":42.578641,"x":1.650004},{"n":"L'Aberset","t":"poi","y":42.578831,"x":1.649375},{"n":"Nordic Esports","t":"poi","y":42.577812,"x":1.649323},{"n":"Pic Negre","t":"poi","y":42.578035,"x":1.648788},{"n":"Pic Negre","t":"poi","y":42.578084,"x":1.648299},{"n":"Sant Pere del Tarter","t":"poi","y":42.578777,"x":1.653225},{"n":"Snackbar El Clos","t":"poi","y":42.577836,"x":1.649186},{"n":"Sports Calbo","t":"poi","y":42.579473,"x":1.649134},{"n":"Vintage","t":"poi","y":42.579084,"x":1.653244},{"n":"Pyr\u00e9n\u00e9es","t":"poi","y":42.508043,"x":1.524371},{"n":"tourist information","t":"poi","y":42.509317,"x":1.542879},{"n":"Esso","t":"poi","y":42.582465,"x":1.662529},{"n":"Vall Esqui","t":"poi","y":42.581444,"x":1.661643},{"n":"aparcament comunal El Trill\u00e0","t":"poi","y":42.508836,"x":1.525804},{"n":"Oficina Nacional de Turisme","t":"poi","y":42.506091,"x":1.521813},{"n":"La Solana Apartaments","t":"poi","y":42.534009,"x":1.58852},{"n":"Hotel Piolets et Spa","t":"poi","y":42.57783,"x":1.663946},{"n":"Caprabo","t":"poi","y":42.547324,"x":1.514498},{"n":"Collada de Meners","t":"poi","y":42.621101,"x":1.606093},{"n":"Sant Vicen\u00e7 d'Enclar","t":"poi","y":42.495706,"x":1.493601},{"n":"Hotel Roc de Sant Miquel","t":"poi","y":42.580841,"x":1.663811},{"n":"Plaus Sport Motor","t":"poi","y":42.533064,"x":1.578204},{"n":"Sol y Muntanya","t":"poi","y":42.533111,"x":1.578252},{"n":"Sol y Montanya","t":"poi","y":42.533054,"x":1.578112},{"n":"La Flambada del raco","t":"poi","y":42.533209,"x":1.578981},{"n":"Farmacia D Encamp","t":"poi","y":42.533226,"x":1.579047},{"n":"Tallers Benjami","t":"poi","y":42.533365,"x":1.579538},{"n":"Ganja Bar Valira","t":"poi","y":42.53332,"x":1.57938},{"n":"Ntrepans Freds i calents","t":"poi","y":42.533454,"x":1.579775},{"n":"Server","t":"poi","y":42.533279,"x":1.579666},{"n":"Comer la Clementina","t":"poi","y":42.533281,"x":1.579239},{"n":"Bar Broques","t":"poi","y":42.533124,"x":1.579147},{"n":"Restaurant Benito","t":"poi","y":42.533089,"x":1.578985},{"n":"El Croco Grill","t":"poi","y":42.533397,"x":1.57997},{"n":"Shusski Bar","t":"poi","y":42.533669,"x":1.580374},{"n":"Onix","t":"poi","y":42.532352,"x":1.57471},{"n":"Comtes de Foix","t":"poi","y":42.532407,"x":1.574929},{"n":"Restaurant La Pantera","t":"poi","y":42.533877,"x":1.58031},{"n":"Bar El Cyrano","t":"poi","y":42.533943,"x":1.580368},{"n":"Marroquineria Sussi","t":"poi","y":42.53368,"x":1.580122},{"n":"Hotel Ibis","t":"poi","y":42.512759,"x":1.550576},{"n":"Andorre-la-Vieille","t":"poi","y":42.507319,"x":1.528393},{"n":"Hotel Ordino","t":"poi","y":42.555631,"x":1.533452},{"n":"Salvador Dali sculpture","t":"poi","y":42.508769,"x":1.529424},{"n":"Parking comunal","t":"poi","y":42.467239,"x":1.492936},{"n":"Naturlandia","t":"poi","y":42.442013,"x":1.501032},{"n":"Espel","t":"poi","y":42.510582,"x":1.542324},{"n":"Engolasters","t":"village","y":42.510511,"x":1.559233},{"n":"Centre hist\u00f2ric","t":"neighbourhood","y":42.509656,"x":1.533537},{"n":"La Margineda","t":"village","y":42.48701,"x":1.491396},{"n":"Refugi de Claror","t":"poi","y":42.470103,"x":1.563889},{"n":"Refugi d'Ensagents","t":"poi","y":42.517018,"x":1.642051},{"n":"Com\u00fa de Canillo","t":"poi","y":42.566483,"x":1.601191},{"n":"Refugi de Cabana Sorda","t":"poi","y":42.61143,"x":1.672383},{"n":"Refugi de Coms de Jan","t":"poi","y":42.618441,"x":1.638832}];
+const REGIONS = [{"id":"andorra","name":"Andorra (bundled sample)","country":"Andorra","s":42.42,"w":1.41,"n":42.66,"e":1.79,"z0":6,"z1":16},{"id":"mumbai","name":"Mumbai","country":"India","s":18.89,"w":72.77,"n":19.28,"e":73.03,"z0":8,"z1":17},{"id":"delhi","name":"Delhi NCR","country":"India","s":28.4,"w":76.84,"n":28.88,"e":77.35,"z0":8,"z1":17},{"id":"bengaluru","name":"Bengaluru","country":"India","s":12.83,"w":77.46,"n":13.14,"e":77.78,"z0":8,"z1":17},{"id":"pune","name":"Pune","country":"India","s":18.4,"w":73.72,"n":18.66,"e":73.99,"z0":8,"z1":17},{"id":"chennai","name":"Chennai","country":"India","s":12.9,"w":80.1,"n":13.24,"e":80.33,"z0":8,"z1":17},{"id":"kolkata","name":"Kolkata","country":"India","s":22.44,"w":88.24,"n":22.72,"e":88.47,"z0":8,"z1":17},{"id":"hyderabad","name":"Hyderabad","country":"India","s":17.25,"w":78.28,"n":17.56,"e":78.6,"z0":8,"z1":17},{"id":"goa","name":"Goa","country":"India","s":14.88,"w":73.68,"n":15.8,"e":74.34,"z0":8,"z1":16},{"id":"jaipur","name":"Jaipur","country":"India","s":26.78,"w":75.68,"n":27.06,"e":75.93,"z0":8,"z1":17},{"id":"india","name":"India (whole country)","country":"India","s":6.55,"w":68.11,"n":35.51,"e":97.41,"z0":4,"z1":11},{"id":"singapore","name":"Singapore","country":"Singapore","s":1.16,"w":103.6,"n":1.48,"e":104.09,"z0":8,"z1":17},{"id":"london","name":"London","country":"United Kingdom","s":51.28,"w":-0.51,"n":51.7,"e":0.33,"z0":8,"z1":17},{"id":"paris","name":"Paris","country":"France","s":48.81,"w":2.22,"n":48.91,"e":2.47,"z0":8,"z1":17},{"id":"new-york","name":"New York City","country":"United States","s":40.48,"w":-74.26,"n":40.92,"e":-73.7,"z0":8,"z1":17},{"id":"tokyo","name":"Tokyo","country":"Japan","s":35.53,"w":139.56,"n":35.82,"e":139.92,"z0":8,"z1":17}];
+
+const VECTOR_TILES = "https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf";
+const TERRAIN_TILES = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+
+const state = {
+  theme: localStorage.getItem("om.theme") || "light",
+  threeD: localStorage.getItem("om.3d") !== "0",
+  buildings: localStorage.getItem("om.buildings") !== "0",
+  terrain: localStorage.getItem("om.terrain") !== "0",
+  exaggeration: Number(localStorage.getItem("om.exaggeration") || 1.2),
+  tab: "explore",
+  query: "",
+  saved: JSON.parse(localStorage.getItem("om.saved") || "[]"),
+  userLocation: null,
+  mapReady: false,
+};
+
+document.documentElement.dataset.theme = state.theme;
+
+/* ---------------------------------- style ---------------------------------- */
+
+function palette() {
+  const dark = state.theme === "dark";
+  return dark
+    ? { bg: "#0f1419", water: "#0d1f2d", waterLine: "#16344a", land: "#141b21", landAlt: "#172029",
+        park: "#12251a", road: "#2b3640", roadMajor: "#3b4a56", roadLabel: "#93a1ad",
+        building: "#1f2933", buildingTop: "#2a3742", label: "#dbe6ef", labelHalo: "#0f1419",
+        boundary: "#3d4d5a" }
+    : { bg: "#f7f4ee", water: "#a9cbe8", waterLine: "#8fb8da", land: "#f2eee6", landAlt: "#ece7dc",
+        park: "#d8e8d2", road: "#ffffff", roadMajor: "#fdf6e3", roadLabel: "#6b6459",
+        building: "#e3dcd0", buildingTop: "#d9d1c3", label: "#1c1914", labelHalo: "#fffdf9",
+        boundary: "#c9c0b1" };
+}
+
+const buildingHeight = ["coalesce", ["get", "render_height"], ["*", ["coalesce", ["get", "levels"], 3], 3], 4];
+
+function buildStyle() {
+  const p = palette();
+  const layers = [
+    { id: "bg", type: "background", paint: { "background-color": p.bg } },
+    { id: "landcover", type: "fill", source: "osm", "source-layer": "landcover",
+      paint: { "fill-color": p.landAlt, "fill-opacity": 0.6 } },
+    { id: "landuse", type: "fill", source: "osm", "source-layer": "landuse",
+      paint: { "fill-color": p.land, "fill-opacity": 0.5 } },
+    { id: "park", type: "fill", source: "osm", "source-layer": "park",
+      paint: { "fill-color": p.park, "fill-opacity": 0.75 } },
+    { id: "water", type: "fill", source: "osm", "source-layer": "water",
+      paint: { "fill-color": p.water } },
+    { id: "waterway", type: "line", source: "osm", "source-layer": "waterway",
+      paint: { "line-color": p.waterLine, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 16, 2.5] } },
+    { id: "boundary", type: "line", source: "osm", "source-layer": "boundary",
+      filter: ["==", ["get", "admin_level"], 2],
+      paint: { "line-color": p.boundary, "line-width": 1.2, "line-dasharray": [3, 2] } },
+    { id: "road-minor", type: "line", source: "osm", "source-layer": "transportation",
+      filter: ["in", ["get", "class"], ["literal", ["minor", "service", "track", "path"]]],
+      paint: { "line-color": p.road, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 17, 4] } },
+    { id: "road-major", type: "line", source: "osm", "source-layer": "transportation",
+      filter: ["in", ["get", "class"], ["literal", ["primary", "secondary", "tertiary", "trunk", "motorway"]]],
+      paint: { "line-color": p.roadMajor, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 17, 8] } },
+    { id: "building-flat", type: "fill", source: "osm", "source-layer": "building", minzoom: 13,
+      paint: { "fill-color": p.building, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0, 14, 0.85] } },
+  ];
+
+  if (state.buildings) {
+    layers.push({
+      id: "building-3d", type: "fill-extrusion", source: "osm", "source-layer": "building", minzoom: 13,
+      paint: {
+        "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 4],
+          0, p.building, 12, p.buildingTop, 40, p.building],
+        "fill-extrusion-height": buildingHeight,
+        "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+        "fill-extrusion-opacity": 0.92,
+        "fill-extrusion-vertical-gradient": true,
+      },
+    });
+  }
+
+  layers.push(
+    { id: "place-city", type: "symbol", source: "osm", "source-layer": "place",
+      filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
+      layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 14, "text-anchor": "top", "text-offset": [0, 0.6] },
+      paint: { "text-color": p.label, "text-halo-color": p.labelHalo, "text-halo-width": 1.4 } },
+    { id: "place-village", type: "symbol", source: "osm", "source-layer": "place",
+      filter: ["in", ["get", "class"], ["literal", ["village", "hamlet"]]], minzoom: 10,
+      layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11.5, "text-anchor": "top", "text-offset": [0, 0.5] },
+      paint: { "text-color": p.roadLabel, "text-halo-color": p.labelHalo, "text-halo-width": 1.2 } },
+    { id: "road-label", type: "symbol", source: "osm", "source-layer": "transportation", minzoom: 14,
+      filter: ["has", "name"],
+      layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 10.5,
+                "symbol-placement": "line", "text-padding": 2 },
+      paint: { "text-color": p.roadLabel, "text-halo-color": p.labelHalo, "text-halo-width": 1.2 } },
+  );
+
+  const style = {
+    version: 8,
+    glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+    sources: {
+      osm: { type: "vector", tiles: [VECTOR_TILES], maxzoom: 14,
+             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · tiles OpenFreeMap' },
+    },
+    layers,
+  };
+
+  if (state.terrain) {
+    style.sources.terrain = { type: "raster-dem", tiles: [TERRAIN_TILES], tileSize: 256, maxzoom: 12,
+                              encoding: "terrarium", attribution: "Terrain: Mapzen / AWS Open Data" };
+    style.terrain = { source: "terrain", exaggeration: state.exaggeration };
+    style.layers.splice(1, 0, {
+      id: "hillshade", type: "hillshade", source: "terrain",
+      paint: { "hillshade-exaggeration": 0.28, "hillshade-shadow-color": state.theme === "dark" ? "#000" : "#7a6a55" },
+    });
+  }
+
+  return style;
+}
+
+/* ---------------------------------- map ---------------------------------- */
+
+let map;
+const FALLBACK_CENTER = { lat: 42.5425, lng: 1.5605 };
+const mapAvailable = () => typeof maplibregl !== "undefined";
+function viewCentre() {
+  if (map) { const c = map.getCenter(); return { lat: c.lat, lng: c.lng }; }
+  return FALLBACK_CENTER;
+}
+let userMarker = null;
+let resultMarkers = [];
+
+function initMap() {
+  if (!mapAvailable()) {
+    document.getElementById("banner").classList.add("show");
+    document.getElementById("banner-detail").textContent =
+      "The MapLibre GL library could not be loaded from its CDN, so the map canvas is unavailable. " +
+      "Search, saved places and the size estimates below still work — they need no map library.";
+    setChip("chip-net", "map library blocked", "bad");
+    return;
+  }
+  map = new maplibregl.Map({
+    container: "map",
+    style: buildStyle(),
+    center: [1.5605, 42.5425],
+    zoom: 12.4,
+    pitch: state.threeD ? 55 : 0,
+    bearing: state.threeD ? -18 : 0,
+    maxPitch: 70,
+    antialias: true,
+    attributionControl: { compact: true },
+  });
+
+  map.on("load", () => {
+    state.mapReady = true;
+    setChip("chip-net", navigator.onLine ? "online tiles" : "offline", navigator.onLine ? "ok" : "warn");
+  });
+
+  map.on("error", (e) => {
+    const msg = (e && e.error && e.error.message) || "";
+    if (msg.includes("tiles") || msg.includes("Failed to fetch") || msg.includes("404") || !state.mapReady) {
+      document.getElementById("banner").classList.add("show");
+      setChip("chip-net", "tiles unavailable", "bad");
+    }
+  });
+
+  window.addEventListener("online", () => setChip("chip-net", "online tiles", "ok"));
+  window.addEventListener("offline", () => setChip("chip-net", "offline", "warn"));
+}
+
+function rebuildStyle() {
+  if (!map) return;
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  const bearing = map.getBearing();
+  const pitch = map.getPitch();
+  map.setStyle(buildStyle(), { diff: false });
+  map.once("styledata", () => {
+    map.jumpTo({ center, zoom, bearing, pitch });
+    redrawMarkers();
+  });
+}
+
+/* ---------------------------------- helpers ---------------------------------- */
+
+function toast(message) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("show"), 2600);
+}
+
+function setChip(id, text, kind) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = "chip" + (kind ? " " + kind : "");
+  el.innerHTML = '<span class="dot"></span>' + text;
+}
+
+function haversine(a, b) {
+  const R = 6371008.8, toRad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toRad, dLon = (b.lng - a.lng) * toRad;
+  const s = Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+function formatDistance(m) {
+  if (m < 950) return Math.round(m / 10) * 10 + " m";
+  return (m / 1000).toFixed(m < 9500 ? 1 : 0) + " km";
+}
+
+/* Tile arithmetic, mirroring TileMath.kt so the size figures match the app. */
+function lon2tile(lon, z) { return Math.floor(((lon + 180) / 360) * Math.pow(2, z)); }
+function lat2tile(lat, z) {
+  const r = (lat * Math.PI) / 180;
+  return Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * Math.pow(2, z));
+}
+function tilesForBounds(b, z0, z1) {
+  let total = 0;
+  for (let z = z0; z <= z1; z++) {
+    const x0 = lon2tile(b.w, z), x1 = lon2tile(b.e, z);
+    const y0 = lat2tile(b.n, z), y1 = lat2tile(b.s, z);
+    total += (Math.abs(x1 - x0) + 1) * (Math.abs(y1 - y0) + 1);
+  }
+  return total;
+}
+function estimateBytes(region) {
+  const vector = tilesForBounds(region, region.z0, region.z1);
+  const dem = tilesForBounds(region, region.z0, Math.min(12, region.z1));
+  return vector * 14000 + dem * 48000;
+}
+function formatBytes(b) {
+  if (b < 1024 * 1024) return Math.round(b / 1024) + " KB";
+  if (b < 1024 * 1024 * 1024) return (b / (1024 * 1024)).toFixed(b < 10 * 1024 * 1024 ? 1 : 0) + " MB";
+  return (b / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+}
+
+/* ---------------------------------- search ---------------------------------- */
+
+const TYPE_WEIGHT = { city: 1, town: 2, country: 3, village: 4, suburb: 5, hamlet: 6, neighbourhood: 7, locality: 8, poi: 9 };
+
+function searchPlaces(query, limit = 14) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const terms = q.split(/\s+/).filter(Boolean);
+  const hits = [];
+  for (const p of PLACES) {
+    const name = p.n.toLowerCase();
+    let score = 0;
+    for (const t of terms) {
+      const idx = name.indexOf(t);
+      if (idx === -1) { score = -1; break; }
+      score += idx === 0 ? 40 : 12;
+    }
+    if (score < 0) continue;
+    if (name === q) score += 120;
+    score += Math.max(0, 30 - (TYPE_WEIGHT[p.t] || 12) * 2);
+    hits.push({ p, score });
+  }
+  hits.sort((a, b) => b.score - a.score || a.p.n.length - b.p.n.length);
+  return hits.slice(0, limit).map((h) => h.p);
+}
+
+function nearbyPlaces(limit = 12) {
+  const c = viewCentre();
+  return PLACES
+    .map((p) => ({ p, d: haversine({ lat: c.lat, lng: c.lng }, { lat: p.y, lng: p.x }) }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, limit)
+    .map((x) => ({ ...x.p, distance: x.d }));
+}
+
+/* ---------------------------------- markers ---------------------------------- */
+
+function clearResultMarkers() {
+  resultMarkers.forEach((m) => m.remove());
+  resultMarkers = [];
+}
+
+function showResultsOnMap(places) {
+  if (!map || !mapAvailable()) return;
+  clearResultMarkers();
+  places.slice(0, 8).forEach((p) => {
+    const el = document.createElement("div");
+    el.className = "pin-dot";
+    el.style.cssText = "width:12px;height:12px;border-radius:50%;background:#0e7490;box-shadow:0 0 0 3px rgba(14,116,144,.18)";
+    resultMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([p.x, p.y]).addTo(map));
+  });
+}
+
+function redrawMarkers() {
+  if (!map || !mapAvailable()) return;
+  state.saved.forEach((s) => {
+    const el = document.createElement("div");
+    el.style.cssText = "width:14px;height:14px;border-radius:50%;background:#9a3412;box-shadow:0 0 0 4px rgba(154,52,18,.18)";
+    new maplibregl.Marker({ element: el }).setLngLat([s.lng, s.lat]).addTo(map);
+  });
+}
+
+/* ---------------------------------- panels ---------------------------------- */
+
+const sheet = document.getElementById("sheet");
+const sheetTitle = document.getElementById("sheet-title");
+const sheetMeta = document.getElementById("sheet-meta");
+const sheetBody = document.getElementById("sheet-body");
+
+function openSheet(title, meta, html) {
+  sheetTitle.textContent = title;
+  sheetMeta.textContent = meta || "";
+  sheetBody.innerHTML = html;
+  sheet.classList.add("open");
+  document.body.classList.add("sheet-open");
+}
+
+function closeSheet() {
+  sheet.classList.remove("open");
+  document.body.classList.remove("sheet-open");
+}
+
+function renderExplore() {
+  const results = state.query ? searchPlaces(state.query) : nearbyPlaces();
+  const meta = state.query ? results.length + " matches" : "nearest to view";
+
+  if (!results.length) {
+    openSheet("Explore", meta,
+      '<div class="empty">No place in the bundled dataset matches “' + escapeHtml(state.query) + '”.<br>' +
+      'The pack holds 256 real OSM places in Andorra — the same data the app indexes offline.</div>');
+    return;
+  }
+
+  const rows = results.map((p) => {
+    const sub = [p.t, p.distance != null ? formatDistance(p.distance) : null].filter(Boolean).join(" · ");
+    return '<div class="row" data-fly="' + p.x + "," + p.y + '">' +
+      '<div class="row__main"><p class="row__title">' + escapeHtml(p.n) + '</p>' +
+      '<p class="row__sub">' + escapeHtml(sub) + '</p></div>' +
+      '<span class="badge muted">' + escapeHtml(p.t) + '</span></div>';
+  }).join("");
+
+  openSheet("Explore", meta, rows +
+    '<p class="note">Tap a place to fly to it. This list comes from the same places pack the Android ' +
+    'app ships for offline search, so it works with no network.</p>');
+  showResultsOnMap(results);
+}
+
+function renderNavigate() {
+  const c = viewCentre();
+  const target = state.saved[0] || PLACES[0];
+  const d = haversine({ lat: c.lat, lng: c.lng }, { lat: target.y || target.lat, lng: target.x || target.lng });
+
+  openSheet("Navigate", "device only",
+    '<div class="row"><div class="row__main">' +
+    '<p class="row__title">Turn-by-turn runs on the phone</p>' +
+    '<p class="row__sub">A browser cannot run the routing engine, and this demo deliberately does not ' +
+    'draw a fake route. The straight-line distance below is real; a route is not.</p></div></div>' +
+
+    '<div class="field"><div><div class="field__label">Straight-line to ' + escapeHtml(target.n) + '</div>' +
+    '<div class="field__hint">Measured, not routed — real road distance is longer</div></div>' +
+    '<span class="row__meta">' + formatDistance(d) + '</span></div>' +
+
+    '<div class="section-label">On the device</div>' +
+    '<div class="row"><div class="row__main"><p class="row__title">GraphHopper 2.4, pre-built graph</p>' +
+    '<p class="row__sub">Driving, cycling and walking. Turn instructions carry real OSM street names.</p></div>' +
+    '<span class="badge">offline</span></div>' +
+
+    '<div class="row"><div class="row__main"><p class="row__title">Off-route detection</p>' +
+    '<p class="row__sub">Three consecutive bad fixes trigger a recalculation.</p></div></div>' +
+
+    '<div class="row"><div class="row__main"><p class="row__title">Voice guidance</p>' +
+    '<p class="row__sub">Android TextToSpeech, announced at 600 / 250 / 80 / 25 m, never repeated.</p></div>' +
+    '<span class="badge muted">TTS</span></div>' +
+
+    '<p class="note"><strong>Why the app ships a graph instead of building one:</strong> GraphHopper\'s OSM ' +
+    'reader needs <code>javax.xml.stream</code>, which Android does not implement, so a phone cannot turn an ' +
+    '<code>.osm.pbf</code> into a routing graph. <code>tools/build_routing_graph.sh</code> builds it on a ' +
+    'desktop and the app only loads it.</p>');
+}
+
+function renderDownloads() {
+  const rows = REGIONS.map((r) => {
+    const tiles = tilesForBounds(r, r.z0, r.z1);
+    const size = estimateBytes(r);
+    const isBundled = r.id === "andorra";
+    return '<div class="row" data-fly="' + ((r.e + r.w) / 2) + "," + ((r.n + r.s) / 2) + '">' +
+      '<div class="row__main"><p class="row__title">' + escapeHtml(r.name) + '</p>' +
+      '<p class="row__sub">' + escapeHtml(r.country) + ' · zooms ' + r.z0 + '–' + r.z1 + '</p></div>' +
+      '<div class="row__meta">' + formatBytes(size) + '<br>' + tiles.toLocaleString() + ' tiles</div>' +
+      (isBundled ? '<span class="badge">bundled</span>' : '<span class="badge muted">estimate</span>') +
+      '</div>';
+  }).join("");
+
+  openSheet("Downloads", REGIONS.length + " regions", rows +
+    '<p class="note"><strong>These figures are computed, not copied.</strong> Tile counts come from the ' +
+    'same slippy-map arithmetic the app uses (<code>TileMath.kt</code>), and the size is ' +
+    '14 KB per vector tile plus 48 KB per terrain tile — an estimate, labelled as one, exactly as in ' +
+    'the app. Actual caching happens in the Android build: MapLibre writes the tiles into its offline ' +
+    'store so the map renders with no network.</p>' +
+    '<p class="note">Andorra is the bundled sample: its routing graph and places pack ship inside the APK, ' +
+    'so routing and search work there with the radio off.</p>');
+}
+
+function renderSaved() {
+  if (!state.saved.length) {
+    openSheet("Saved places", "empty",
+      '<div class="empty">Nothing saved yet.<br>Pan the map and press <strong>Save this view</strong>.</div>' +
+      '<div style="text-align:center;padding-bottom:8px"><button class="btn primary" id="save-view">Save this view</button></div>');
+    return;
+  }
+  const rows = state.saved.map((s, i) =>
+    '<div class="row">' +
+    '<div class="row__main"><p class="row__title">' + escapeHtml(s.name) + '</p>' +
+    '<p class="row__sub">' + s.lat.toFixed(5) + ', ' + s.lng.toFixed(5) + '</p></div>' +
+    '<button class="btn small" data-fly="' + s.lng + "," + s.lat + '">Go</button>' +
+    '<button class="btn small danger" data-del="' + i + '">Remove</button></div>').join("");
+
+  openSheet("Saved places", state.saved.length + " saved", rows +
+    '<div style="text-align:center;padding:12px 0 4px"><button class="btn primary" id="save-view">Save this view</button></div>' +
+    '<p class="note">Stored in this browser only, with <code>localStorage</code>. The Android app keeps the ' +
+    'same list in Room, on the device, and never uploads it.</p>');
+}
+
+function renderSettings() {
+  openSheet("Settings", "demo", `
+    <div class="field"><div><div class="field__label">Dark map</div>
+      <div class="field__hint">Regenerates the style, same as the app's theme switch</div></div>
+      <label class="switch"><input type="checkbox" id="set-theme" ${state.theme === "dark" ? "checked" : ""}><span></span></label></div>
+
+    <div class="field"><div><div class="field__label">3D buildings</div>
+      <div class="field__hint">Extruded from OSM footprints and height tags</div></div>
+      <label class="switch"><input type="checkbox" id="set-buildings" ${state.buildings ? "checked" : ""}><span></span></label></div>
+
+    <div class="field"><div><div class="field__label">Terrain</div>
+      <div class="field__hint">Terrarium elevation tiles, Mapzen / AWS Open Data</div></div>
+      <label class="switch"><input type="checkbox" id="set-terrain" ${state.terrain ? "checked" : ""}><span></span></label></div>
+
+    <div class="field"><div><div class="field__label">Terrain exaggeration</div>
+      <div class="field__hint">${state.exaggeration.toFixed(1)}×</div></div>
+      <input type="range" id="set-exaggeration" min="0.5" max="2.5" step="0.1" value="${state.exaggeration}"></div>
+
+    <div class="field"><div><div class="field__label">Clear saved places</div>
+      <div class="field__hint">${state.saved.length} stored in this browser</div></div>
+      <button class="btn small danger" id="clear-saved">Clear</button></div>
+
+    <p class="note">Heights are only as good as the data: OSM <code>height</code> or <code>building:levels</code> ' +
+    'where mapped, otherwise 3 m per level and 4 m as a last resort — which the app documents as an estimate ' +
+    'rather than pretending every building is measured.</p>
+
+    <div class="section-label">About this page</div>
+    <p class="note">A browser companion to the Android app in <code>technicalnihilist-lgtm/offline-maps</code>. ' +
+    'It shares the app's generated style, places pack and tile arithmetic. Offline caching and routing are ' +
+    'device features and are not simulated here.</p>`);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ---------------------------------- wiring ---------------------------------- */
+
+function renderTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  ({ explore: renderExplore, navigate: renderNavigate, downloads: renderDownloads, saved: renderSaved, settings: renderSettings })[tab]();
+}
+
+document.querySelectorAll(".tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const alreadyOpen = sheet.classList.contains("open") && state.tab === btn.dataset.tab;
+    if (alreadyOpen) { closeSheet(); return; }
+    renderTab(btn.dataset.tab);
+  });
+});
+
+const searchInput = document.getElementById("search");
+let searchTimer = null;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.query = searchInput.value;
+    if (state.tab !== "explore") renderTab("explore"); else renderExplore();
+    if (state.query) showResultsOnMap(searchPlaces(state.query));
+  }, 110);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && document.activeElement !== searchInput) { e.preventDefault(); searchInput.focus(); }
+  if (e.key === "Escape") { searchInput.blur(); closeSheet(); }
+});
+
+document.getElementById("zoom-in").addEventListener("click", () => map && map.zoomIn());
+document.getElementById("zoom-out").addEventListener("click", () => map && map.zoomOut());
+document.getElementById("compass").addEventListener("click", () => {
+  if (!map) return;
+  map.easeTo({ bearing: 0, pitch: state.threeD ? 55 : 0, duration: 500 });
+});
+
+function apply3D() {
+  document.getElementById("toggle-3d").classList.toggle("active", state.threeD);
+  document.getElementById("chip-mode-text").textContent = state.threeD ? "3D · tilt 55°" : "2D · flat";
+  if (map) map.easeTo({ pitch: state.threeD ? 55 : 0, bearing: state.threeD ? -18 : 0, duration: 620 });
+}
+
+document.getElementById("toggle-3d").addEventListener("click", () => {
+  if (!map) { toast("3D needs the map library"); return; }
+  state.threeD = !state.threeD;
+  localStorage.setItem("om.3d", state.threeD ? "1" : "0");
+  apply3D();
+});
+
+document.getElementById("locate").addEventListener("click", () => {
+  if (!navigator.geolocation) { toast("This browser has no location API"); return; }
+  toast("Finding your position…");
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      state.userLocation = { lat: latitude, lng: longitude, accuracy };
+      if (userMarker) userMarker.remove();
+      const el = document.createElement("div");
+      el.style.cssText = "width:16px;height:16px;border-radius:50%;background:#0e7490;border:3px solid #fff;box-shadow:0 0 0 4px rgba(14,116,144,.25)";
+      userMarker = new maplibregl.Marker({ element: el }).setLngLat([longitude, latitude]).addTo(map);
+      map.flyTo({ center: [longitude, latitude], zoom: Math.max(map.getZoom(), 14), duration: 900 });
+      toast("Your position · ±" + Math.round(accuracy) + " m");
+    },
+    (err) => toast(err.code === 1 ? "Location permission denied" : "Position unavailable"),
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+});
+
+document.getElementById("banner-close").addEventListener("click", () => {
+  document.getElementById("banner").classList.remove("show");
+});
+
+/* delegated actions inside the sheet */
+sheetBody.addEventListener("click", (e) => {
+  const fly = e.target.closest("[data-fly]");
+  if (fly) {
+    const [lng, lat] = fly.dataset.fly.split(",").map(Number);
+    if (map) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 14), duration: 900 });
+    else toast(lat.toFixed(4) + ", " + lng.toFixed(4));
+    return;
+  }
+  const del = e.target.closest("[data-del]");
+  if (del) {
+    const i = Number(del.dataset.del);
+    state.saved.splice(i, 1);
+    localStorage.setItem("om.saved", JSON.stringify(state.saved));
+    renderSaved();
+    toast("Removed");
+    return;
+  }
+  if (e.target.id === "save-view") {
+    const c = viewCentre();
+    const name = prompt("Name this place", "Pin " + (state.saved.length + 1));
+    if (!name) return;
+    state.saved.push({ name, lat: c.lat, lng: c.lng });
+    localStorage.setItem("om.saved", JSON.stringify(state.saved));
+    renderSaved();
+    toast("Saved to this browser");
+  }
+});
+
+/* settings controls (re-rendered each time, so re-bind on render) */
+sheetBody.addEventListener("change", (e) => {
+  const id = e.target.id;
+  if (id === "set-theme") {
+    state.theme = e.target.checked ? "dark" : "light";
+    localStorage.setItem("om.theme", state.theme);
+    document.documentElement.dataset.theme = state.theme;
+    rebuildStyle();
+  }
+  if (id === "set-buildings") {
+    state.buildings = e.target.checked;
+    localStorage.setItem("om.buildings", state.buildings ? "1" : "0");
+    rebuildStyle();
+  }
+  if (id === "set-terrain") {
+    state.terrain = e.target.checked;
+    localStorage.setItem("om.terrain", state.terrain ? "1" : "0");
+    rebuildStyle();
+  }
+  if (id === "set-exaggeration") {
+    state.exaggeration = Number(e.target.value);
+    localStorage.setItem("om.exaggeration", String(state.exaggeration));
+    if (map && state.terrain) map.setTerrain({ source: "terrain", exaggeration: state.exaggeration });
+    renderSettings();
+  }
+  if (e.target.id === "clear-saved") {
+    state.saved = [];
+    localStorage.setItem("om.saved", "[]");
+    renderSaved();
+    toast("Saved places cleared");
+  }
+});
+/* ---------------------------------- boot ---------------------------------- */
+
+initMap();
+apply3D();
+// Fill the Explore list, but keep the sheet closed so the map stays visible on load.
+setTimeout(() => { renderTab("explore"); closeSheet(); }, 300);
+</script>
+</body>
+</html>
