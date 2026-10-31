@@ -1,0 +1,9 @@
+offline-maps - third-party notices
+
+Map data bundled or downloaded by this application is (c) OpenStreetMap
+contributors, licensed under the Open Database License (ODbL) 1.0.
+Terrain tiles: Mapzen / AWS Open Data.
+Tiles: OpenFreeMap.
+
+These notices apply to the third-party data and services listed above and do
+not alter the terms of the MIT License in the LICENSE file.
