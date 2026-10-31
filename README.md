@@ -17,6 +17,25 @@ without installing anything; offline caching and routing stay on the device.
 
 ---
 
+## Interface: liquid glass
+
+The chrome over the map — search bar, control buttons, status chips, bottom bar and the bottom
+sheets — is drawn with a layered glass treatment (`core/ui/Glass.kt`): a translucent tint, a diagonal
+sheen, a specular highlight near the top edge, a refractive rim as a gradient border, and a soft
+two-layer shadow for lift. The bottom bar carries a single pill that springs between tabs and
+stretches slightly while travelling.
+
+It is deliberately **not** a live backdrop blur. Blurring what sits behind a view is not cheap in
+Compose, and doing it over a map that repaints every frame is exactly the kind of effect that drains a
+battery — which this app is meant to avoid. The layered shading is what sells the material instead.
+Both light and dark themes derive their glass from the active colour scheme, so there is no second
+palette to keep in sync.
+
+The same look is implemented in the [browser demo](docs/web-demo.html) in CSS, which is where the
+direction started.
+
+---
+
 ## Screenshots
 
 These are **UI design reference renders**, generated from the same layout, colours and strings as

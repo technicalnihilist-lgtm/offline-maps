@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <title>Offline Maps — 3D map demo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -338,6 +338,167 @@
     * { transition: none !important; animation: none !important; }
   }
 </style>
+<style id="liquid-glass">
+/* ===== Liquid glass + depth + spring motion (override layer) ===== */
+:root{
+  --nav-h: calc(90px + env(safe-area-inset-bottom,0px));
+  --spring: cubic-bezier(.34,1.56,.64,1);
+  --tx:0; --ty:0;
+  --glass: linear-gradient(135deg, rgba(255,255,255,.58), rgba(255,255,255,.20));
+  --glass-strong: linear-gradient(150deg, rgba(255,255,255,.80), rgba(255,255,255,.48));
+  --rim: rgba(255,255,255,.95);
+  --spec: rgba(255,255,255,.70);
+  --glass-shadow:
+    0 1px 1px rgba(20,30,50,.06), 0 4px 8px rgba(20,30,50,.08),
+    0 14px 28px rgba(20,30,50,.12), 0 32px 60px rgba(20,30,50,.14),
+    inset 0 1px 1px rgba(255,255,255,.9), inset 0 -10px 18px rgba(255,255,255,.14),
+    inset 0 0 22px rgba(255,255,255,.22);
+}
+html[data-theme="dark"]{
+  --glass: linear-gradient(135deg, rgba(70,92,114,.46), rgba(22,30,40,.26));
+  --glass-strong: linear-gradient(150deg, rgba(42,58,74,.80), rgba(18,26,36,.62));
+  --rim: rgba(255,255,255,.42);
+  --spec: rgba(255,255,255,.24);
+  --glass-shadow:
+    0 1px 1px rgba(0,0,0,.30), 0 4px 8px rgba(0,0,0,.28),
+    0 14px 28px rgba(0,0,0,.34), 0 32px 60px rgba(0,0,0,.42),
+    inset 0 1px 1px rgba(255,255,255,.24), inset 0 -10px 18px rgba(255,255,255,.04),
+    inset 0 0 22px rgba(255,255,255,.05);
+}
+
+/* glass surface */
+.searchbar,.chip,.ctl,.sheet,nav.bottom{
+  isolation:isolate;
+  background:var(--glass);
+  -webkit-backdrop-filter:blur(22px) saturate(190%) brightness(1.04);
+  backdrop-filter:blur(22px) saturate(190%) brightness(1.04);
+  border:1px solid transparent;
+  box-shadow:var(--glass-shadow);
+}
+.searchbar,.chip,.ctl{position:relative}
+/* specular light that follows the pointer / device tilt */
+.searchbar::before,.chip::before,.ctl::before,.sheet::before,nav.bottom::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;z-index:-1;pointer-events:none;opacity:.85;
+  background:radial-gradient(120% 80% at calc(50% + var(--tx)*35%) calc(-10% + var(--ty)*18%), var(--spec), transparent 58%);
+}
+/* refractive rim */
+.searchbar::after,.chip::after,.ctl::after,.sheet::after,nav.bottom::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1.2px;z-index:-1;pointer-events:none;opacity:.9;
+  background:linear-gradient(calc(135deg + var(--tx)*25deg), var(--rim), rgba(255,255,255,0) 38%, rgba(255,255,255,0) 62%, var(--rim));
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor; mask-composite:exclude;
+}
+
+/* 4D depth: perspective tilt + parallax shift (3D) driven by pointer/tilt (time/motion) */
+.searchbar,.chip,.ctl,nav.bottom{
+  transform:perspective(800px) rotateX(calc(var(--ty)*-5deg)) rotateY(calc(var(--tx)*7deg));
+  translate:calc(var(--tx)*var(--d,6)*-1px) calc(var(--ty)*var(--d,6)*-1px);
+  scale:var(--s,1);
+  transition:transform .4s cubic-bezier(.22,1,.36,1), translate .4s cubic-bezier(.22,1,.36,1),
+             scale .55s var(--spring), box-shadow .3s ease, background .25s ease, color .2s ease;
+}
+.chip{--d:12} .ctl{--d:10} .searchbar{--d:6} nav.bottom{--d:5}
+.searchbar:focus-within{--s:1.025}
+.ctl:active{--s:.88}
+@media (hover:hover){ .ctl:hover{--s:1.1} }
+.ctl.active{background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 88%,#fff),var(--accent))}
+.chip{border-color:rgba(255,255,255,.0)}
+
+/* entrance pop */
+.searchbar,.chip,.ctl,nav.bottom{animation:pop .9s var(--spring) backwards}
+.chip:nth-child(2){animation-delay:.1s}.chip:nth-child(3){animation-delay:.2s}
+.ctl:nth-child(1){animation-delay:.15s}.ctl:nth-child(2){animation-delay:.21s}.ctl:nth-child(3){animation-delay:.27s}
+.ctl:nth-child(4){animation-delay:.33s}.ctl:nth-child(5){animation-delay:.39s}
+nav.bottom{animation-delay:.1s}
+@keyframes pop{from{opacity:0;scale:.7}}
+
+/* controls bounce away when the sheet opens */
+.controls{transition:opacity .25s ease, scale .6s var(--spring)}
+body.sheet-open .controls{scale:.8}
+
+/* ---------- bottom sheet: bounce open / bounce close ---------- */
+.sheet{
+  position:fixed;left:10px;right:10px;bottom:var(--nav-h);
+  max-width:640px;margin-inline:auto;
+  border-radius:30px;overflow:hidden;
+  background:var(--glass-strong);
+  transform-origin:50% 100%;
+  transform:perspective(1100px) translate3d(0,calc(115% + var(--dy,0px)),0) rotateX(16deg) scale(.92);
+  opacity:0;visibility:hidden;
+  /* close: pulls back, then drops (ease-in-back) */
+  transition:transform .5s cubic-bezier(.36,0,.66,-.56), opacity .28s ease .14s, visibility 0s linear .5s;
+}
+.sheet.open{
+  transform:perspective(1100px) translate3d(0,var(--dy,0px),0) rotateX(calc(var(--ty)*-1.6deg)) rotateY(calc(var(--tx)*2.2deg)) scale(1);
+  opacity:1;visibility:visible;
+  /* open: overshoots, then settles */
+  transition:transform .85s var(--spring), opacity .25s ease, visibility 0s;
+}
+.sheet.dragging{transition:none}
+.sheet__grab{width:44px;height:5px;margin:10px auto 6px;cursor:grab;touch-action:none}
+.sheet__head{touch-action:none;cursor:grab}
+.sheet__body.stagger>*{animation:rise .75s var(--spring) backwards;animation-delay:calc(var(--n,0)*45ms + 60ms)}
+@keyframes rise{from{opacity:0;transform:translate(calc(var(--dir,0)*30px),18px) scale(.94)}}
+
+/* ---------- floating glass nav + liquid sliding pill ---------- */
+nav.bottom{
+  position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  max-width:520px;margin-inline:auto;height:66px;padding:6px;border-radius:33px;
+}
+.nav-pill{
+  position:absolute;top:6px;bottom:6px;left:6px;width:calc((100% - 12px)/5);
+  border-radius:27px;z-index:-1;pointer-events:none;
+  translate:calc(var(--i,0)*100%) 0;
+  background:linear-gradient(180deg,rgba(255,255,255,.88),rgba(255,255,255,.4));
+  box-shadow:0 6px 18px rgba(14,116,144,.28),0 0 0 1px rgba(255,255,255,.55),
+             inset 0 1px 1px #fff, inset 0 -3px 8px rgba(14,116,144,.16);
+  transition:translate .65s cubic-bezier(.34,1.45,.5,1), scale .5s var(--spring), opacity .3s ease;
+}
+html[data-theme="dark"] .nav-pill{
+  background:linear-gradient(180deg,rgba(255,255,255,.26),rgba(255,255,255,.08));
+  box-shadow:0 6px 18px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.2),inset 0 1px 1px rgba(255,255,255,.4);
+}
+body:not(.sheet-open) .nav-pill{opacity:.55;scale:.92}
+body .nav-pill.stretch{scale:1.38 .86}
+.tab{border-radius:24px;-webkit-tap-highlight-color:transparent;transition:color .25s ease}
+.tab .ind{display:none}
+.tab svg{transition:scale .4s var(--spring)}
+.tab:active svg{scale:.8}
+.tab[aria-selected="true"] svg{animation:tabBounce .7s var(--spring)}
+@keyframes tabBounce{0%{translate:0 0;scale:1}35%{translate:0 -7px;scale:1.24}65%{translate:0 1px;scale:.94}100%{translate:0 0;scale:1}}
+
+/* ---------- toast / banner / small controls ---------- */
+.toast{
+  background:rgba(18,24,32,.58);color:#fff;
+  -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+  border:1px solid rgba(255,255,255,.25);box-shadow:var(--glass-shadow);
+  transform:translate(-50%,36px) scale(.8);
+  transition:opacity .25s ease, transform .6s var(--spring);
+}
+.toast.show{transform:translate(-50%,0) scale(1)}
+.banner{
+  background:var(--glass-strong);border-radius:20px;box-shadow:var(--glass-shadow);
+  -webkit-backdrop-filter:blur(22px) saturate(190%);backdrop-filter:blur(22px) saturate(190%);
+}
+.banner.show{animation:bannerIn .75s var(--spring)}
+@keyframes bannerIn{from{opacity:0;transform:translateY(-26px) scale(.9)}}
+.row{transition:background .2s ease, scale .45s var(--spring)}
+.row:hover{background:color-mix(in srgb,var(--surface) 55%,transparent)}
+.row:active{scale:.98}
+.btn{
+  background:color-mix(in srgb,var(--surface) 45%,transparent);
+  border-color:rgba(255,255,255,.55);
+  box-shadow:0 2px 6px rgba(20,30,50,.1),inset 0 1px 0 rgba(255,255,255,.8);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  transition:scale .45s var(--spring), background .2s ease;
+}
+.btn:active{scale:.92}
+.btn.primary{background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 78%,#fff),var(--accent))}
+.switch span::after{transition:transform .55s var(--spring), width .25s ease}
+.switch input:active + span::after{width:27px}
+.switch input:checked:active + span::after{transform:translateX(11px)}
+@media (max-width:560px){ .sheet{max-height:58vh} }
+</style>
 </head>
 <body>
 
@@ -390,6 +551,7 @@
 </div>
 
 <nav class="bottom" role="tablist">
+  <span class="nav-pill" aria-hidden="true"></span>
   <button class="tab" role="tab" data-tab="explore" aria-selected="true">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>
     <span>Explore</span><span class="ind"></span>
@@ -741,13 +903,30 @@ const sheet = document.getElementById("sheet");
 const sheetTitle = document.getElementById("sheet-title");
 const sheetMeta = document.getElementById("sheet-meta");
 const sheetBody = document.getElementById("sheet-body");
+const navEl = document.querySelector("nav.bottom");
+const navPill = navEl.querySelector(".nav-pill");
+const TAB_ORDER = ["explore", "navigate", "downloads", "saved", "settings"];
+function stretchPill() {
+  navPill.classList.add("stretch");
+  clearTimeout(stretchPill._t);
+  stretchPill._t = setTimeout(() => navPill.classList.remove("stretch"), 200);
+}
 
+let animateNext = false;
 function openSheet(title, meta, html) {
+  const wasOpen = sheet.classList.contains("open");
   sheetTitle.textContent = title;
   sheetMeta.textContent = meta || "";
   sheetBody.innerHTML = html;
   sheet.classList.add("open");
   document.body.classList.add("sheet-open");
+  if (!wasOpen || animateNext) {
+    animateNext = false;
+    [...sheetBody.children].slice(0, 12).forEach((c, i) => c.style.setProperty("--n", i));
+    sheetBody.classList.remove("stagger");
+    void sheetBody.offsetWidth;
+    sheetBody.classList.add("stagger");
+  }
 }
 
 function closeSheet() {
@@ -878,14 +1057,10 @@ function renderSettings() {
       <div class="field__hint">${state.saved.length} stored in this browser</div></div>
       <button class="btn small danger" id="clear-saved">Clear</button></div>
 
-    <p class="note">Heights are only as good as the data: OSM <code>height</code> or <code>building:levels</code> ' +
-    'where mapped, otherwise 3 m per level and 4 m as a last resort — which the app documents as an estimate ' +
-    'rather than pretending every building is measured.</p>
+    <p class="note">Heights are only as good as the data: OSM <code>height</code> or <code>building:levels</code> where mapped, otherwise 3 m per level and 4 m as a last resort — which the app documents as an estimate rather than pretending every building is measured.</p>
 
     <div class="section-label">About this page</div>
-    <p class="note">A browser companion to the Android app in <code>technicalnihilist-lgtm/offline-maps</code>. ' +
-    'It shares the app's generated style, places pack and tile arithmetic. Offline caching and routing are ' +
-    'device features and are not simulated here.</p>`);
+    <p class="note">A browser companion to the Android app in <code>technicalnihilist-lgtm/offline-maps</code>. It shares the app's generated style, places pack and tile arithmetic. Offline caching and routing are device features and are not simulated here.</p>`);
 }
 
 function escapeHtml(s) {
@@ -895,8 +1070,13 @@ function escapeHtml(s) {
 /* ---------------------------------- wiring ---------------------------------- */
 
 function renderTab(tab) {
+  const prevIdx = TAB_ORDER.indexOf(state.tab), idx = TAB_ORDER.indexOf(tab);
   state.tab = tab;
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  navEl.style.setProperty("--i", idx);
+  sheetBody.style.setProperty("--dir", Math.sign(idx - prevIdx));
+  if (idx !== prevIdx) stretchPill();
+  animateNext = true;
   ({ explore: renderExplore, navigate: renderNavigate, downloads: renderDownloads, saved: renderSaved, settings: renderSettings })[tab]();
 }
 
@@ -1028,6 +1208,56 @@ sheetBody.addEventListener("change", (e) => {
     toast("Saved places cleared");
   }
 });
+/* ---------------------------------- liquid glass motion ---------------------------------- */
+(function () {
+  const root = document.documentElement;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // light + depth follow the mouse, or the phone's tilt
+  if (!reduce) {
+    let tx = 0, ty = 0, raf = 0;
+    const put = (x, y) => {
+      tx = Math.max(-1, Math.min(1, x)); ty = Math.max(-1, Math.min(1, y));
+      if (!raf) raf = requestAnimationFrame(() => {
+        raf = 0;
+        root.style.setProperty("--tx", tx.toFixed(3));
+        root.style.setProperty("--ty", ty.toFixed(3));
+      });
+    };
+    addEventListener("pointermove", (e) => {
+      if (e.pointerType === "mouse") put((e.clientX / innerWidth - .5) * 2, (e.clientY / innerHeight - .5) * 2);
+    }, { passive: true });
+    addEventListener("deviceorientation", (e) => {
+      if (e.gamma != null && e.beta != null) put(e.gamma / 25, (e.beta - 50) / 25);
+    }, { passive: true });
+  }
+
+  // drag the sheet down to close it; it rubber-bands back if you let go early
+  let startY = null, dy = 0;
+  [sheet.querySelector(".sheet__grab"), sheet.querySelector(".sheet__head")].forEach((el) => {
+    el.addEventListener("pointerdown", (e) => {
+      startY = e.clientY; dy = 0;
+      sheet.classList.add("dragging");
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (startY == null) return;
+      dy = e.clientY - startY;
+      sheet.style.setProperty("--dy", (dy < 0 ? dy * .25 : dy) + "px");
+    });
+    const end = () => {
+      if (startY == null) return;
+      startY = null;
+      sheet.classList.remove("dragging");
+      sheet.style.removeProperty("--dy");
+      if (dy > 90) closeSheet();
+      dy = 0;
+    };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+  });
+})();
+
 /* ---------------------------------- boot ---------------------------------- */
 
 initMap();

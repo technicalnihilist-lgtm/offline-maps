@@ -42,14 +42,7 @@ import androidx.compose.ui.unit.dp
 /** Rounded floating surface used by every map overlay control. */
 @Composable
 fun FloatingPanel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
-        content = content,
-    )
+    GlassPanel(modifier = modifier, shape = RoundedCornerShape(20.dp), elevation = 10.dp, content = content)
 }
 
 /** Circular icon button that sits over the map. */
@@ -63,15 +56,16 @@ fun MapCircleButton(
     enabled: Boolean = true,
     badge: String? = null,
 ) {
-    val background = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
     val tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    // Active buttons get the accent as the glass tint so the state still reads at a glance.
+    val glassTint = if (active) MaterialTheme.colorScheme.primary else null
     Box(modifier = modifier.alpha(if (enabled) 1f else 0.45f)) {
         Surface(
             shape = CircleShape,
-            color = background.copy(alpha = 0.96f),
-            shadowElevation = 4.dp,
+            color = Color.Transparent,
             modifier = Modifier
                 .size(48.dp)
+                .glassSurface(shape = CircleShape, elevation = 8.dp, tint = glassTint)
                 .semantics { this.contentDescription = contentDescription }
                 .clickable(enabled = enabled, onClick = onClick),
         ) {
@@ -117,8 +111,12 @@ fun StatusChip(
     }
     Surface(
         shape = RoundedCornerShape(50),
-        color = background,
-        modifier = modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        color = Color.Transparent,
+        // Chips are small, so they get a lighter lift than the panels - glass that is too "deep"
+        // on a 24dp-tall element reads as a bubble rather than a surface.
+        modifier = modifier
+            .glassSurface(shape = RoundedCornerShape(50), elevation = 4.dp, tint = background)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),

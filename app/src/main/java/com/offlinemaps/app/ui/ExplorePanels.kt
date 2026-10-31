@@ -43,6 +43,10 @@ import com.offlinemaps.core.ui.FloatingPanel
 import com.offlinemaps.core.ui.Hairline
 import com.offlinemaps.core.ui.StatusChip
 import com.offlinemaps.core.ui.StatusTone
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.graphics.Color
+import com.offlinemaps.core.ui.GlassPanel
 
 @Composable
 fun ExploreSearchBar(
@@ -53,13 +57,25 @@ fun ExploreSearchBar(
     onClear: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        FloatingPanel(modifier = Modifier.fillMaxWidth()) {
+        // Pill-shaped glass bar. The text field itself is made transparent so the glass shows
+        // through instead of sitting inside a second, outlined box.
+        GlassPanel(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            elevation = 12.dp,
+        ) {
             OutlinedTextField(
                 value = state.searchQuery,
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
                 placeholder = { Text("Search places, streets or 18.52, 73.85") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                ),
                 trailingIcon = {
                     if (state.searchQuery.isNotEmpty()) {
                         IconButton(onClick = onClear) {

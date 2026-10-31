@@ -46,6 +46,15 @@ import com.offlinemaps.app.nav.NavigationSessionUi
 import com.offlinemaps.core.common.MapMode
 import com.offlinemaps.core.routing.RouteResult
 import com.offlinemaps.core.ui.MapCircleButton
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import com.offlinemaps.core.ui.glassSurface
 
 enum class Tab(val label: String, val icon: ImageVector) {
     EXPLORE("Explore", Icons.Filled.Explore),
@@ -212,17 +221,11 @@ fun AppScaffold(
                 Tab.SETTINGS -> SettingsPanel(locator = locator)
             }
 
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                Tab.entries.forEach { entry ->
-                    NavigationBarItem(
-                        selected = tab == entry,
-                        onClick = { onTabChange(entry) },
-                        icon = { Icon(entry.icon, contentDescription = entry.label, modifier = Modifier.size(22.dp)) },
-                        label = { Text(entry.label, style = MaterialTheme.typography.labelSmall) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(navBarPadding))
+            GlassBottomBar(
+                selected = tab,
+                onSelect = onTabChange,
+                bottomInset = navBarPadding,
+            )
         }
     }
 
@@ -269,4 +272,96 @@ private fun MapControls(
             active = state.hasLocationPermission,
         )
     }
+}
+
+/**
+ * Glass bottom navigation with a pill that springs between tabs.
+ *
+ * The pill is a single animated box rather than a per-item background, which is what makes the
+ * movement read as one object sliding; the width overshoots slightly while it travels so the motion
+ * has weight, then settles. Springs (not tweens) so an interrupted tap retargets smoothly.
+ */
+@Composable
+private fun GlassBottomBar(
+    selected: Tab,
+    onSelect: (Tab) -> Unit,
+    bottomInset: androidx.compose.ui.unit.Dp,
+) {
+    val entries = Tab.entries
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val index by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = entries.indexOf(selected).toFloat(),
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+        ),
+        label = "tabIndex",
+    )
+    // Stretch while in transit: 1.0 when settled, wider mid-flight.
+    val settled = kotlin.math.abs(index - index.toInt().toFloat()) < 0.02f
+    val stretch by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (settled) 1f else 1.22f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessHigh,
+        ),
+        label = "tabStretch",
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Transparent)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .glassSurface(shape = RoundedCornerShape(24.dp), elevation = 14.dp),
+    ) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val itemWidth = maxWidth / entries.size
+            Box(
+                modifier = Modifier
+                    .offset(x = itemWidth * index)
+                    .width(itemWidth * stretch)
+                    .height(52.dp)
+                    .align(Alignment.CenterStart)
+                    .glassSurface(
+                        shape = RoundedCornerShape(18.dp),
+                        elevation = 0.dp,
+                        tint = MaterialTheme.colorScheme.primary,
+                    ),
+            )
+            Row(Modifier.fillMaxWidth()) {
+                entries.forEach { entry ->
+                    val active = entry == selected
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { onSelect(entry) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            entry.icon,
+                            contentDescription = entry.label,
+                            modifier = Modifier.size(22.dp),
+                            tint = if (active) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            entry.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (active) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(bottomInset))
 }
