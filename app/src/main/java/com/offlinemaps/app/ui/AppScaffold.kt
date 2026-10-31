@@ -55,6 +55,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import com.offlinemaps.core.ui.glassSurface
+import androidx.compose.foundation.layout.Row
 
 enum class Tab(val label: String, val icon: ImageVector) {
     EXPLORE("Explore", Icons.Filled.Explore),
