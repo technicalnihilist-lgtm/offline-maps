@@ -47,6 +47,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.ui.graphics.Color
 import com.offlinemaps.core.ui.GlassPanel
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun ExploreSearchBar(
@@ -183,6 +186,13 @@ fun ExploreBottomPanel(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
+                    val context = LocalContext.current
+                    IconButton(onClick = { PlaceActions.copyCoordinates(context, destination.point) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy coordinates")
+                    }
+                    IconButton(onClick = { PlaceActions.sharePlace(context, destination.name, destination.point) }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Share destination")
                     }
                     IconButton(onClick = onDismissDestination) {
                         Icon(Icons.Filled.Close, contentDescription = "Clear destination")

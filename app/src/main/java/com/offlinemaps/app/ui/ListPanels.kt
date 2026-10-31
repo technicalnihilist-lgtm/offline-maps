@@ -42,6 +42,7 @@ import com.offlinemaps.core.ui.ProgressRow
 import com.offlinemaps.core.ui.SectionHeader
 import com.offlinemaps.core.ui.StatusChip
 import com.offlinemaps.core.ui.StatusTone
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun DownloadsPanel(locator: ServiceLocator) {
@@ -243,6 +244,13 @@ fun SavedPanel(locator: ServiceLocator, onGoTo: (GeoPoint) -> Unit) {
                         subtitle = "${place.label.label} · ${place.point.format(5)}",
                         trailing = {
                             Row {
+                                val context = LocalContext.current
+                                TextButton(onClick = { PlaceActions.copyCoordinates(context, place.point) }) {
+                                    Text("Copy")
+                                }
+                                TextButton(onClick = { PlaceActions.sharePlace(context, place.name, place.point) }) {
+                                    Text("Share")
+                                }
                                 TextButton(onClick = { onGoTo(place.point) }) { Text("Go") }
                                 TextButton(onClick = { viewModel.delete(place) }) { Text("Remove") }
                             }
@@ -315,6 +323,28 @@ fun SettingsPanel(locator: ServiceLocator) {
                 item { ToggleRow("Terrain relief", settings.terrainEnabled, viewModel::setTerrain) }
                 item { SectionHeader("Downloads") }
                 item { ToggleRow("Wi-Fi only downloads", settings.wifiOnlyDownloads, viewModel::setWifiOnly) }
+                item {
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        Text("Storage limit for downloaded maps", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Currently ${settings.storageLimitMb} MB. Downloads are refused when they would pass this.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(512L, 2048L, 8192L, 16384L).forEach { mb ->
+                                val selected = settings.storageLimitMb == mb
+                                TextButton(onClick = { viewModel.setStorageLimitMb(mb) }) {
+                                    Text(
+                                        if (mb >= 1024) "${mb / 1024} GB" else "$mb MB",
+                                        color = if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 item { ToggleRow("Metric units", settings.metricUnits, viewModel::setMetric) }
                 item { SectionHeader("Voice guidance") }
                 item { ToggleRow("Spoken directions", settings.voiceGuidanceEnabled, viewModel::setVoiceEnabled) }
