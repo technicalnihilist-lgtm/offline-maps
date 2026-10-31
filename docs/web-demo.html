@@ -329,6 +329,17 @@
     flex: none;
   }
 
+  /* Rows with a meta column and buttons get cramped on phones: drop the tile count and let the
+     action group wrap under the text instead of squeezing it. */
+  .row__meta .tiles { display: block; }
+  @media (max-width: 480px) {
+    .row__meta .tiles { display: none; }
+    .row--stack { flex-wrap: wrap; }
+    .row--stack .row__main { flex-basis: 100%; }
+    .row--stack .row__actions { margin-left: auto; display: flex; gap: 6px; padding-top: 6px; }
+    .row__sub { font-size: 11.5px; }
+  }
+
   @media (max-width: 560px) {
     .controls { top: auto; bottom: calc(var(--nav-h) + 12px); transform: none; right: 12px; }
     .sheet { max-height: 58vh; }
@@ -615,7 +626,25 @@ const state = {
   saved: JSON.parse(localStorage.getItem("om.saved") || "[]"),
   userLocation: null,
   mapReady: false,
+  // Mirrors the app: quality presets, download policy, installed regions, nav profile.
+  quality: localStorage.getItem("om.quality") || "high",
+  voice: localStorage.getItem("om.voice") !== "0",
+  wifiOnly: localStorage.getItem("om.wifiOnly") !== "0",
+  storageLimitMb: Number(localStorage.getItem("om.storageLimit") || 4096),
+  installed: JSON.parse(localStorage.getItem("om.installed") || "[]"),
+  destination: null,
+  profile: "car",
 };
+
+/* Same numbers as GraphicsQuality in the app: max pitch and the zoom at which buildings appear. */
+const QUALITY = {
+  low:    { label: "Low",    pitch: 30, minZoom: 15 },
+  medium: { label: "Medium", pitch: 50, minZoom: 14 },
+  high:   { label: "High",   pitch: 65, minZoom: 13 },
+};
+const PROFILES = { car: "Drive", bike: "Cycle", foot: "Walk" };
+const SAVED_LABELS = ["Home", "Work", "School", "Saved place"];
+const quality = () => QUALITY[state.quality] || QUALITY.high;
 
 document.documentElement.dataset.theme = state.theme;
 
@@ -659,13 +688,13 @@ function buildStyle() {
     { id: "road-major", type: "line", source: "osm", "source-layer": "transportation",
       filter: ["in", ["get", "class"], ["literal", ["primary", "secondary", "tertiary", "trunk", "motorway"]]],
       paint: { "line-color": p.roadMajor, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 17, 8] } },
-    { id: "building-flat", type: "fill", source: "osm", "source-layer": "building", minzoom: 13,
+    { id: "building-flat", type: "fill", source: "osm", "source-layer": "building", minzoom: quality().minZoom,
       paint: { "fill-color": p.building, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0, 14, 0.85] } },
   ];
 
   if (state.buildings) {
     layers.push({
-      id: "building-3d", type: "fill-extrusion", source: "osm", "source-layer": "building", minzoom: 13,
+      id: "building-3d", type: "fill-extrusion", source: "osm", "source-layer": "building", minzoom: quality().minZoom,
       paint: {
         "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 4],
           0, p.building, 12, p.buildingTop, 40, p.building],
@@ -744,7 +773,7 @@ function initMap() {
     zoom: 12.4,
     pitch: state.threeD ? 55 : 0,
     bearing: state.threeD ? -18 : 0,
-    maxPitch: 70,
+    maxPitch: quality().pitch + 5,
     antialias: true,
     attributionControl: { compact: true },
   });
@@ -802,6 +831,39 @@ function haversine(a, b) {
   const s = Math.sin(dLat / 2) ** 2 +
     Math.cos(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied " + text);
+  } catch {
+    // Clipboard API needs a secure context; fall back to a prompt so the value is still reachable.
+    prompt("Copy this value", text);
+  }
+}
+
+function shareLink(lat, lng) {
+  return "https://www.openstreetmap.org/?mlat=" + lat.toFixed(5) + "&mlon=" + lng.toFixed(5) +
+    "#map=16/" + lat.toFixed(5) + "/" + lng.toFixed(5);
+}
+
+function setInstalled(id, on) {
+  const next = new Set(state.installed);
+  if (on) next.add(id); else next.delete(id);
+  state.installed = [...next];
+  localStorage.setItem("om.installed", JSON.stringify(state.installed));
+  updateCoverageChip();
+}
+
+function updateCoverageChip() {
+  const n = state.installed.length;
+  const label = n === 0 ? "no offline maps yet" : n + (n === 1 ? " region installed" : " regions installed");
+  const el = document.getElementById("chip-coverage");
+  if (el) {
+    el.className = "chip" + (n === 0 ? " warn" : " ok");
+    el.innerHTML = '<span class="dot"></span>' + label;
+  }
 }
 
 function formatDistance(m) {
@@ -938,8 +1000,37 @@ function renderExplore() {
   const results = state.query ? searchPlaces(state.query) : nearbyPlaces();
   const meta = state.query ? results.length + " matches" : "nearest to view";
 
+  // Destination card, as in the app: shown once a place is picked.
+  const dest = state.destination ? (() => {
+    const d = haversine({ lat: viewCentre().lat, lng: viewCentre().lng }, { lat: state.destination.y, lng: state.destination.x });
+    return '<div class="section-label">Destination</div>' +
+      '<div class="row"><div class="row__main">' +
+      '<p class="row__title">' + escapeHtml(state.destination.n) + '</p>' +
+      '<p class="row__sub">' + escapeHtml(state.destination.t) + ' · ' + formatDistance(d) + ' straight line</p></div>' +
+      '<button class="btn small" data-copy="' + state.destination.y.toFixed(5) + ", " + state.destination.x.toFixed(5) + '">Copy</button>' +
+      '<button class="btn small" data-save-dest="1">Save</button></div>' +
+      '<div class="field"><div><div class="field__label">Profile</div>' +
+      '<div class="field__hint">The app routes on device; this only records the choice</div></div>' +
+      '<div>' + Object.entries(PROFILES).map(([id, label]) =>
+        '<button class="btn small" data-profile="' + id + '"' +
+        (state.profile === id ? ' style="background:var(--accent);color:#fff;border-color:transparent"' : '') +
+        '>' + label + '</button>').join(" ") + '</div></div>';
+  })() : "";
+
+  const sampleInstalled = state.installed.includes("andorra");
+  const sample = '<div class="section-label">Bundled sample</div>' +
+    '<div class="row"><div class="row__main">' +
+    '<p class="row__title">Andorra — routing + offline search</p>' +
+    '<p class="row__sub">' + (sampleInstalled
+      ? 'Installed. On the phone this is a pre-built routing graph plus the places pack, so routing works with the radio off.'
+      : 'Ships inside the APK: a pre-built routing graph and the 256-place pack. No download needed.') + '</p></div>' +
+    (sampleInstalled
+      ? '<span class="badge">installed</span>'
+      : '<button class="btn small primary" data-install-sample="1">Install</button>') + '</div>';
+
   if (!results.length) {
     openSheet("Explore", meta,
+      dest + sample +
       '<div class="empty">No place in the bundled dataset matches “' + escapeHtml(state.query) + '”.<br>' +
       'The pack holds 256 real OSM places in Andorra — the same data the app indexes offline.</div>');
     return;
@@ -947,22 +1038,32 @@ function renderExplore() {
 
   const rows = results.map((p) => {
     const sub = [p.t, p.distance != null ? formatDistance(p.distance) : null].filter(Boolean).join(" · ");
-    return '<div class="row" data-fly="' + p.x + "," + p.y + '">' +
+    return '<div class="row" data-fly="' + p.x + "," + p.y + '" data-pick="' + p.x + "," + p.y + "," + encodeURIComponent(p.n) + "," + p.t + '">' +
       '<div class="row__main"><p class="row__title">' + escapeHtml(p.n) + '</p>' +
       '<p class="row__sub">' + escapeHtml(sub) + '</p></div>' +
       '<span class="badge muted">' + escapeHtml(p.t) + '</span></div>';
   }).join("");
 
-  openSheet("Explore", meta, rows +
-    '<p class="note">Tap a place to fly to it. This list comes from the same places pack the Android ' +
-    'app ships for offline search, so it works with no network.</p>');
+  openSheet("Explore", meta, dest + sample + '<div class="section-label">Places</div>' + rows +
+    '<p class="note">Tap a place to fly to it and set it as the destination. This list comes from the ' +
+    'same places pack the Android app ships for offline search, so it works with no network.</p>');
   showResultsOnMap(results);
 }
 
 function renderNavigate() {
   const c = viewCentre();
-  const target = state.saved[0] || PLACES[0];
-  const d = haversine({ lat: c.lat, lng: c.lng }, { lat: target.y || target.lat, lng: target.x || target.lng });
+  const target = state.destination || state.saved[0] || PLACES[0];
+  const tLat = target.y != null ? target.y : target.lat;
+  const tLng = target.x != null ? target.x : target.lng;
+  const tName = target.n || target.name;
+  const d = haversine({ lat: c.lat, lng: c.lng }, { lat: tLat, lng: tLng });
+
+  const profileRow = '<div class="section-label">Profile</div>' +
+    '<div class="row">' + Object.entries(PROFILES).map(([id, label]) =>
+      '<button class="btn small" data-profile="' + id + '"' +
+      (state.profile === id ? ' style="background:var(--accent);color:#fff;border-color:transparent"' : '') +
+      '>' + label + '</button>').join(" ") +
+    '<div class="row__main"></div></div>';
 
   openSheet("Navigate", "device only",
     '<div class="row"><div class="row__main">' +
@@ -970,13 +1071,15 @@ function renderNavigate() {
     '<p class="row__sub">A browser cannot run the routing engine, and this demo deliberately does not ' +
     'draw a fake route. The straight-line distance below is real; a route is not.</p></div></div>' +
 
-    '<div class="field"><div><div class="field__label">Straight-line to ' + escapeHtml(target.n) + '</div>' +
+    profileRow +
+
+    '<div class="field"><div><div class="field__label">Straight-line to ' + escapeHtml(tName) + '</div>' +
     '<div class="field__hint">Measured, not routed — real road distance is longer</div></div>' +
     '<span class="row__meta">' + formatDistance(d) + '</span></div>' +
 
     '<div class="section-label">On the device</div>' +
     '<div class="row"><div class="row__main"><p class="row__title">GraphHopper 2.4, pre-built graph</p>' +
-    '<p class="row__sub">Driving, cycling and walking. Turn instructions carry real OSM street names.</p></div>' +
+    '<p class="row__sub">Drive, cycle and walk. Turn instructions carry real OSM street names.</p></div>' +
     '<span class="badge">offline</span></div>' +
 
     '<div class="row"><div class="row__main"><p class="row__title">Off-route detection</p>' +
@@ -984,7 +1087,10 @@ function renderNavigate() {
 
     '<div class="row"><div class="row__main"><p class="row__title">Voice guidance</p>' +
     '<p class="row__sub">Android TextToSpeech, announced at 600 / 250 / 80 / 25 m, never repeated.</p></div>' +
-    '<span class="badge muted">TTS</span></div>' +
+    '<span class="badge ' + (state.voice ? "" : "muted") + '">' + (state.voice ? "on" : "muted") + '</span></div>' +
+
+    '<div class="row"><div class="row__main"><p class="row__title">Foreground service</p>' +
+    '<p class="row__sub">Keeps guidance alive with the screen off, with a persistent notification.</p></div></div>' +
 
     '<p class="note"><strong>Why the app ships a graph instead of building one:</strong> GraphHopper\'s OSM ' +
     'reader needs <code>javax.xml.stream</code>, which Android does not implement, so a phone cannot turn an ' +
@@ -997,50 +1103,83 @@ function renderDownloads() {
     const tiles = tilesForBounds(r, r.z0, r.z1);
     const size = estimateBytes(r);
     const isBundled = r.id === "andorra";
-    return '<div class="row" data-fly="' + ((r.e + r.w) / 2) + "," + ((r.n + r.s) / 2) + '">' +
-      '<div class="row__main"><p class="row__title">' + escapeHtml(r.name) + '</p>' +
+    const installed = state.installed.includes(r.id);
+    return '<div class="row">' +
+      '<div class="row__main" data-fly="' + ((r.e + r.w) / 2) + "," + ((r.n + r.s) / 2) + '">' +
+      '<p class="row__title">' + escapeHtml(r.name) + '</p>' +
       '<p class="row__sub">' + escapeHtml(r.country) + ' · zooms ' + r.z0 + '–' + r.z1 + '</p></div>' +
-      '<div class="row__meta">' + formatBytes(size) + '<br>' + tiles.toLocaleString() + ' tiles</div>' +
-      (isBundled ? '<span class="badge">bundled</span>' : '<span class="badge muted">estimate</span>') +
-      '</div>';
+      '<div class="row__meta">' + formatBytes(size) +
+      '<span class="tiles">' + tiles.toLocaleString() + ' tiles</span></div>' +
+      '<div class="row__actions">' +
+      (installed
+        ? '<span class="badge">installed</span><button class="btn small danger" data-uninstall="' + r.id + '">Delete</button>'
+        : (isBundled
+            ? '<span class="badge">bundled</span>'
+            : '<button class="btn small" data-install="' + r.id + '">Download</button>')) +
+      '</div></div>';
   }).join("");
 
-  openSheet("Downloads", REGIONS.length + " regions", rows +
+  const usedMb = state.installed.length * 24;
+  openSheet("Downloads", REGIONS.length + " regions",
+    '<div class="field"><div><div class="field__label">Wi-Fi only</div>' +
+    '<div class="field__hint">The app refuses mobile data when this is on</div></div>' +
+    '<label class="switch"><input type="checkbox" id="set-wifi" ' + (state.wifiOnly ? "checked" : "") + '><span></span></label></div>' +
+
+    '<div class="field"><div><div class="field__label">Storage limit</div>' +
+    '<div class="field__hint">' + state.storageLimitMb + ' MB · about ' + usedMb + ' MB used by installed maps</div></div>' +
+    '<input type="range" id="set-limit" min="512" max="16384" step="512" value="' + state.storageLimitMb + '"></div>' +
+
+    '<div class="section-label">Regions</div>' + rows +
+
     '<p class="note"><strong>These figures are computed, not copied.</strong> Tile counts come from the ' +
     'same slippy-map arithmetic the app uses (<code>TileMath.kt</code>), and the size is ' +
     '14 KB per vector tile plus 48 KB per terrain tile — an estimate, labelled as one, exactly as in ' +
-    'the app. Actual caching happens in the Android build: MapLibre writes the tiles into its offline ' +
-    'store so the map renders with no network.</p>' +
-    '<p class="note">Andorra is the bundled sample: its routing graph and places pack ship inside the APK, ' +
-    'so routing and search work there with the radio off.</p>');
+    'the app.</p>' +
+    '<p class="note"><strong>Downloading here is a bookmark, not a cache.</strong> Marking a region ' +
+    'installed only remembers the choice in this browser. The real caching is MapLibre writing tiles into ' +
+    'its offline store on the device, with pause, resume, cancel and SHA-256 verification.</p>');
 }
 
 function renderSaved() {
   if (!state.saved.length) {
     openSheet("Saved places", "empty",
       '<div class="empty">Nothing saved yet.<br>Pan the map and press <strong>Save this view</strong>.</div>' +
-      '<div style="text-align:center;padding-bottom:8px"><button class="btn primary" id="save-view">Save this view</button></div>');
+      '<div style="text-align:center;padding-bottom:8px"><button class="btn primary" id="save-view">Save this view</button></div>' +
+      '<p class="note">The app keeps the same list in Room, on the device, with Home / Work / School / ' +
+      'custom labels, and never uploads it.</p>');
     return;
   }
   const rows = state.saved.map((s, i) =>
-    '<div class="row">' +
+    '<div class="row row--stack">' +
     '<div class="row__main"><p class="row__title">' + escapeHtml(s.name) + '</p>' +
-    '<p class="row__sub">' + s.lat.toFixed(5) + ', ' + s.lng.toFixed(5) + '</p></div>' +
+    '<p class="row__sub">' + (s.label || "Saved place") + ' · ' + s.lat.toFixed(5) + ', ' + s.lng.toFixed(5) + '</p></div>' +
+    '<div class="row__actions">' +
+    '<button class="btn small" data-copy="' + s.lat.toFixed(5) + ", " + s.lng.toFixed(5) + '">Copy</button>' +
+    '<button class="btn small" data-share="' + s.lat + "," + s.lng + '">Share</button>' +
     '<button class="btn small" data-fly="' + s.lng + "," + s.lat + '">Go</button>' +
-    '<button class="btn small danger" data-del="' + i + '">Remove</button></div>').join("");
+    '<button class="btn small danger" data-del="' + i + '">Remove</button></div></div>').join("");
 
   openSheet("Saved places", state.saved.length + " saved", rows +
     '<div style="text-align:center;padding:12px 0 4px"><button class="btn primary" id="save-view">Save this view</button></div>' +
     '<p class="note">Stored in this browser only, with <code>localStorage</code>. The Android app keeps the ' +
-    'same list in Room, on the device, and never uploads it.</p>');
+    'same list in Room, on the device, and never uploads it. Share produces a plain OpenStreetMap link — ' +
+    'the app offers the same or a <code>geo:</code> intent.</p>');
 }
 
 function renderSettings() {
+  const q = quality();
   openSheet("Settings", "demo", `
+    <div class="section-label">Appearance</div>
     <div class="field"><div><div class="field__label">Dark map</div>
       <div class="field__hint">Regenerates the style, same as the app's theme switch</div></div>
       <label class="switch"><input type="checkbox" id="set-theme" ${state.theme === "dark" ? "checked" : ""}><span></span></label></div>
 
+    <div class="field"><div><div class="field__label">Graphics quality</div>
+      <div class="field__hint">${q.label} · max pitch ${q.pitch}° · buildings from z${q.minZoom}</div></div>
+      <div>${Object.entries(QUALITY).map(([id, v]) =>
+        `<button class="btn small" data-quality="${id}"${state.quality === id ? ' style="background:var(--accent);color:#fff;border-color:transparent"' : ""}>${v.label}</button>`).join(" ")}</div></div>
+
+    <div class="section-label">3D</div>
     <div class="field"><div><div class="field__label">3D buildings</div>
       <div class="field__hint">Extruded from OSM footprints and height tags</div></div>
       <label class="switch"><input type="checkbox" id="set-buildings" ${state.buildings ? "checked" : ""}><span></span></label></div>
@@ -1053,14 +1192,27 @@ function renderSettings() {
       <div class="field__hint">${state.exaggeration.toFixed(1)}×</div></div>
       <input type="range" id="set-exaggeration" min="0.5" max="2.5" step="0.1" value="${state.exaggeration}"></div>
 
-    <div class="field"><div><div class="field__label">Clear saved places</div>
+    <div class="section-label">Navigation</div>
+    <div class="field"><div><div class="field__label">Voice guidance</div>
+      <div class="field__hint">Android TextToSpeech on the device; this switch only records the preference</div></div>
+      <label class="switch"><input type="checkbox" id="set-voice" ${state.voice ? "checked" : ""}><span></span></label></div>
+
+    <div class="section-label">Privacy and storage</div>
+    <div class="field"><div><div class="field__label">Saved places</div>
       <div class="field__hint">${state.saved.length} stored in this browser</div></div>
       <button class="btn small danger" id="clear-saved">Clear</button></div>
+
+    <div class="field"><div><div class="field__label">Installed maps</div>
+      <div class="field__hint">${state.installed.length} marked in this browser</div></div>
+      <button class="btn small danger" id="clear-installed">Clear</button></div>
+
+    <p class="note">Everything on this page stays in your browser. The app is the same: saved places and
+    search history live in Room on the device, GPS history is never uploaded, and there are no analytics.</p>
 
     <p class="note">Heights are only as good as the data: OSM <code>height</code> or <code>building:levels</code> where mapped, otherwise 3 m per level and 4 m as a last resort — which the app documents as an estimate rather than pretending every building is measured.</p>
 
     <div class="section-label">About this page</div>
-    <p class="note">A browser companion to the Android app in <code>technicalnihilist-lgtm/offline-maps</code>. It shares the app's generated style, places pack and tile arithmetic. Offline caching and routing are device features and are not simulated here.</p>`);
+    <p class="note">A browser companion to the Android app in <code>technicalnihilist-lgtm/offline-maps</code>. It shares the app's generated style, places pack, tile arithmetic and quality presets. Offline caching and routing are device features and are not simulated here.</p>`);
 }
 
 function escapeHtml(s) {
@@ -1165,11 +1317,70 @@ sheetBody.addEventListener("click", (e) => {
     toast("Removed");
     return;
   }
+  const pick = e.target.closest("[data-pick]");
+  if (pick) {
+    const [lng, lat, name, type] = pick.dataset.pick.split(",");
+    state.destination = { n: decodeURIComponent(name), t: type, x: Number(lng), y: Number(lat) };
+    renderExplore();
+    return;
+  }
+  const copy = e.target.closest("[data-copy]");
+  if (copy) { copyText(copy.dataset.copy); return; }
+
+  const share = e.target.closest("[data-share]");
+  if (share) {
+    const [lat, lng] = share.dataset.share.split(",").map(Number);
+    copyText(shareLink(lat, lng));
+    return;
+  }
+  const install = e.target.closest("[data-install]");
+  if (install) {
+    setInstalled(install.dataset.install, true);
+    renderDownloads();
+    toast("Marked installed — the app caches the real tiles");
+    return;
+  }
+  const uninstall = e.target.closest("[data-uninstall]");
+  if (uninstall) {
+    setInstalled(uninstall.dataset.uninstall, false);
+    renderDownloads();
+    toast("Removed");
+    return;
+  }
+  if (e.target.closest("[data-install-sample]")) {
+    setInstalled("andorra", true);
+    renderExplore();
+    toast("Sample region installed");
+    return;
+  }
+  const profile = e.target.closest("[data-profile]");
+  if (profile) {
+    state.profile = profile.dataset.profile;
+    (state.tab === "navigate" ? renderNavigate : renderExplore)();
+    return;
+  }
+  const qBtn = e.target.closest("[data-quality]");
+  if (qBtn) {
+    state.quality = qBtn.dataset.quality;
+    localStorage.setItem("om.quality", state.quality);
+    rebuildStyle();
+    renderSettings();
+    return;
+  }
+  if (e.target.closest("[data-save-dest]") && state.destination) {
+    const d = state.destination;
+    const label = prompt("Label: Home, Work, School, or anything else", "Saved place");
+    if (label === null) return;
+    state.saved.push({ name: d.n, label: label || "Saved place", lat: d.y, lng: d.x });
+    localStorage.setItem("om.saved", JSON.stringify(state.saved));
+    toast("Saved to this browser");
+    return;
+  }
   if (e.target.id === "save-view") {
     const c = viewCentre();
-    const name = prompt("Name this place", "Pin " + (state.saved.length + 1));
-    if (!name) return;
-    state.saved.push({ name, lat: c.lat, lng: c.lng });
+    const label = prompt("Label: Home, Work, School, or anything else", SAVED_LABELS[3]);
+    if (label === null) return;
+    state.saved.push({ name: label || "Saved place", label: label || "Saved place", lat: c.lat, lng: c.lng });
     localStorage.setItem("om.saved", JSON.stringify(state.saved));
     renderSaved();
     toast("Saved to this browser");
@@ -1184,6 +1395,28 @@ sheetBody.addEventListener("change", (e) => {
     localStorage.setItem("om.theme", state.theme);
     document.documentElement.dataset.theme = state.theme;
     rebuildStyle();
+  }
+  if (id === "set-wifi") {
+    state.wifiOnly = e.target.checked;
+    localStorage.setItem("om.wifiOnly", state.wifiOnly ? "1" : "0");
+    renderDownloads();
+  }
+  if (id === "set-limit") {
+    state.storageLimitMb = Number(e.target.value);
+    localStorage.setItem("om.storageLimit", String(state.storageLimitMb));
+    renderDownloads();
+  }
+  if (id === "set-voice") {
+    state.voice = e.target.checked;
+    localStorage.setItem("om.voice", state.voice ? "1" : "0");
+    renderSettings();
+  }
+  if (e.target.id === "clear-installed") {
+    state.installed = [];
+    localStorage.setItem("om.installed", "[]");
+    updateCoverageChip();
+    renderSettings();
+    toast("Installed maps cleared");
   }
   if (id === "set-buildings") {
     state.buildings = e.target.checked;
@@ -1263,7 +1496,7 @@ sheetBody.addEventListener("change", (e) => {
 initMap();
 apply3D();
 // Fill the Explore list, but keep the sheet closed so the map stays visible on load.
-setTimeout(() => { renderTab("explore"); closeSheet(); }, 300);
+setTimeout(() => { renderTab("explore"); closeSheet(); updateCoverageChip(); }, 300);
 </script>
 </body>
 </html>
