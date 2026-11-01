@@ -9,7 +9,10 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.offlinemaps.app.StartupTrace
 import com.offlinemaps.core.common.MapTheme
+import com.offlinemaps.core.map.MapStyleFactory
+import com.offlinemaps.core.map.StyleOptions
 import org.maplibre.android.maps.MapView
 
 /**
@@ -18,10 +21,16 @@ import org.maplibre.android.maps.MapView
  * The MapView is created exactly once per composition and its lifecycle is forwarded manually,
  * which is what MapLibre requires - recreating it on every recomposition would leak native
  * renderer resources.
+ *
+ * Nothing here happens before the view is attached: MapLibre is initialised in the factory, and the
+ * style document is generated from [styleOptions] only when a style is actually needed (first
+ * attach, or when the options really changed). Recomposition passes a small [StyleOptions] value
+ * instead of a freshly serialised style string, so the JSON is not built on the main thread for
+ * state changes that cannot affect it.
  */
 @Composable
 fun MapCanvas(
-    styleJson: String,
+    styleOptions: StyleOptions,
     theme: MapTheme,
     onMapReady: (MapController) -> Unit,
     onCameraIdle: () -> Unit,
@@ -32,13 +41,17 @@ fun MapCanvas(
     val bundle = remember { Bundle() }
     val mapViewRef = remember { arrayOfNulls<MapView>(1) }
     val controllerRef = remember { arrayOfNulls<MapController>(1) }
-    val styleRef = remember { arrayOfNulls<String>(1) }
-    val appliedRef = remember { arrayOfNulls<String>(1) }
-    styleRef[0] = styleJson
+    val optionsRef = remember { arrayOfNulls<StyleOptions>(1) }
+    val appliedRef = remember { arrayOfNulls<StyleOptions>(1) }
+    optionsRef[0] = styleOptions
 
     AndroidView(
         modifier = modifier,
         factory = { context ->
+            // MapLibre needs its process-wide initialisation before the first MapView exists, so
+            // this is the earliest correct point - and the latest possible one. It used to run in
+            // Application.onCreate, before the map was needed at all.
+            MapLibreBootstrap.ensureInitialised(context)
             MapView(context).apply {
                 onCreate(bundle)
                 mapViewRef[0] = this
@@ -55,19 +68,21 @@ fun MapCanvas(
                         onMapClick(latLng.latitude, latLng.longitude)
                         true
                     }
-                    appliedRef[0] = styleRef[0]
-                    controller.applyStyle(styleRef[0] ?: "{}", theme)
+                    val options = optionsRef[0] ?: styleOptions
+                    appliedRef[0] = options
+                    controller.applyStyle(MapStyleFactory.buildJson(options), theme)
+                    StartupTrace.process.firstStyleApplied()
                     onMapReady(controller)
                 }
             }
         },
-        update = { view ->
-            // The style is only re-applied when the generated document actually changes.
-            val controller = controllerRef[0]
-            val pending = styleRef[0]
-            if (controller != null && pending != null && pending != appliedRef[0]) {
+        update = { _ ->
+            // The style is only rebuilt and re-applied when the options that produce it change.
+            val controller = controllerRef[0] ?: return@AndroidView
+            val pending = optionsRef[0] ?: return@AndroidView
+            if (pending != appliedRef[0]) {
                 appliedRef[0] = pending
-                controller.applyStyle(pending, theme)
+                controller.applyStyle(MapStyleFactory.buildJson(pending), theme)
             }
         },
     )

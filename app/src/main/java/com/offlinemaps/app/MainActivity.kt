@@ -92,7 +92,7 @@ private fun AppRoot(locator: ServiceLocator, mapViewModel: MapViewModel) {
         onStopNavigationService = { NavigationService.stop(locator.appContext) },
         mapContent = { modifier ->
             MapCanvas(
-                styleJson = state.styleJson,
+                styleOptions = state.styleOptions,
                 theme = state.theme,
                 modifier = modifier,
                 onMapReady = { mapController ->

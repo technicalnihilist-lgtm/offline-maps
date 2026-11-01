@@ -21,7 +21,6 @@ import com.offlinemaps.core.common.TravelProfile
 import com.offlinemaps.core.data.InstalledRegion
 import com.offlinemaps.core.data.RecentSearch
 import com.offlinemaps.core.data.SavedPlace
-import com.offlinemaps.core.map.MapStyleFactory
 import com.offlinemaps.core.map.StyleOptions
 import com.offlinemaps.core.routing.RouteResult
 import kotlinx.coroutines.Job
@@ -61,15 +60,17 @@ data class MapUiState(
     val installingSample: Boolean = false,
     val sampleMessage: String? = null,
 ) {
-    val styleJson: String
-        get() = MapStyleFactory.buildJson(
-            StyleOptions(
-                theme = theme,
-                show3DBuildings = buildingsEnabled,
-                showTerrain = terrainEnabled,
-                buildingsMinZoom = quality.buildingsMinZoom,
-                maxTerrainZoom = 12,
-            ),
+    /**
+     * Inputs the map style is generated from. Cheap to build and comparable, so the map surface can
+     * tell a real change from a recomposition without serialising the style document each time.
+     */
+    val styleOptions: StyleOptions
+        get() = StyleOptions(
+            theme = theme,
+            show3DBuildings = buildingsEnabled,
+            showTerrain = terrainEnabled,
+            buildingsMinZoom = quality.buildingsMinZoom,
+            maxTerrainZoom = 12,
         )
 
     /** Honest one-line coverage statement shown under the search bar. */
