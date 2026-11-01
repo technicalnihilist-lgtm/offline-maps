@@ -13,6 +13,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Builds a MapLibre style document for the app.
@@ -61,7 +62,75 @@ object MapStyleFactory {
         roadLabel = "#9aa5b1", hillshade = "#ffffff",
     )
 
+    /**
+     * How many generated documents are kept. A device only ever needs a handful - one per theme,
+     * quality preset and terrain/building combination it has actually shown - so a small bounded
+     * cache covers the whole realistic set and still evicts if a self-hoster switches tile servers
+     * repeatedly.
+     */
+    internal const val MAX_CACHED_STYLES = 8
+
+    /**
+     * Access-ordered LRU of generated documents. [StyleOptions] is a data class over data classes,
+     * so its own equals/hashCode already cover every input that can change the output: theme,
+     * 3D-building and terrain toggles, the two zoom thresholds and the whole [MapConfig] (tile URLs,
+     * max zoom, attribution). Keying on it is therefore exact - no two different documents can share
+     * a key, and no identical document can miss.
+     */
+    private val styleCache = object : LinkedHashMap<StyleOptions, String>(MAX_CACHED_STYLES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<StyleOptions, String>): Boolean =
+            size > MAX_CACHED_STYLES
+    }
+
+    private val cacheLock = Any()
+    private val cacheHits = AtomicLong()
+    private val cacheMisses = AtomicLong()
+
+    /**
+     * The generated style document for [options], built at most once per distinct set of options.
+     *
+     * Serialising the document is the expensive part (hundreds of JSON nodes), and callers ask for
+     * it on the main thread - when the map view attaches, when the options change, and when an
+     * offline region is registered. Caching turns every repeat into a map lookup.
+     */
     fun buildJson(options: StyleOptions): String {
+        synchronized(cacheLock) { styleCache[options] }?.let { cached ->
+            cacheHits.incrementAndGet()
+            return cached
+        }
+        // Built outside the lock so a slow build cannot stall other callers; if two threads race on
+        // the same options they produce equal documents and one of them simply wins the insert.
+        val json = render(options)
+        synchronized(cacheLock) {
+            val existing = styleCache[options]
+            if (existing != null) {
+                cacheHits.incrementAndGet()
+                return existing
+            }
+            styleCache[options] = json
+            cacheMisses.incrementAndGet()
+        }
+        return json
+    }
+
+    /** Number of documents currently cached. Exposed for tests. */
+    internal fun cachedStyleCount(): Int = synchronized(cacheLock) { styleCache.size }
+
+    /** Cache hit count since the last [clearStyleCache]. Exposed for tests. */
+    internal fun styleCacheHits(): Long = cacheHits.get()
+
+    /** Cache miss count since the last [clearStyleCache]. Exposed for tests. */
+    internal fun styleCacheMisses(): Long = cacheMisses.get()
+
+    /** Drops every cached document. Only tests and diagnostics need this. */
+    internal fun clearStyleCache() {
+        synchronized(cacheLock) { styleCache.clear() }
+        cacheHits.set(0)
+        cacheMisses.set(0)
+    }
+
+    /** The uncached generator. Pure: same options in, same document out. */
+    private fun render(options: StyleOptions): String {
         val palette = if (options.theme == MapTheme.DARK) DARK else LIGHT
         val style = buildJsonObject {
             put("version", 8)
