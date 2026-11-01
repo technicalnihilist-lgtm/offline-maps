@@ -20,7 +20,7 @@ Rules for every item:
 ## A · Startup and first frame
 
 - [x] A-01 Lazy-initialise `ServiceLocator` members that the first screen does not need (Room, search index, download engine), so cold start does not touch disk for them.
-- [ ] A-02 Move `SearchIndex` database opening off the main thread; assert with StrictMode in debug builds that no disk I/O happens on the main thread during startup.
+- [x] A-02 Move `SearchIndex` database opening off the main thread; assert with StrictMode in debug builds that no disk I/O happens on the main thread during startup.
 - [ ] A-03 Defer `MapLibre.getInstance` and style construction until the map view is actually attached, and measure the difference in startup time.
 - [ ] A-04 Cache the generated style JSON in memory keyed by (theme, quality, terrain, buildings) instead of rebuilding the string on every call.
 - [ ] A-05 `StyleFileWriter`: skip rewriting the style file when the serialised content is unchanged (hash compare) to avoid pointless disk writes on every map open.
@@ -125,3 +125,4 @@ Rules for every item:
 |---|---|---|---|
 | — | — | backlog created | — |
 | 2026-11-01 | A-01 | Cold start no longer touches the download path: `ServiceLocator` members were already lazy, so the eager part was `OfflineMapsApp.onCreate` calling `restorePendingDownloads()`, which read the download table and could build `DownloadManager` + `OkHttpClient` + storage probe before the first frame. The restore now runs from `MainActivity` off a `decorView` post (once per process, and it skips building the engine when nothing is resumable); new `ServiceLocatorLazinessTest` pins the laziness down. versionCode 6 / 1.0.5. | https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/41285453638 |
+| 2026-11-01 | A-02 | `SearchRepository` is now a suspending facade: every index call runs on an injected `Dispatchers.IO` dispatcher, so `offline_search.db` is opened and queried on a worker thread instead of the main thread (the main caller was `MapViewModel.setSearchQuery`, on `viewModelScope`). New `StartupIoAudit` installs a StrictMode disk-IO policy in debuggable builds, records violations raised between `Application.onCreate` and the first frame, and reports them when that window closes, with `assertNoDiskIoOnMainThread()` as the assertion itself; `StartupIoAuditTest` (5 tests) and two dispatcher tests in `SearchIndexTest` cover it. versionCode 7 / 1.0.6. | https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/41289754797 |
