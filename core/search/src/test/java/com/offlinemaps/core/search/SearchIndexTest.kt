@@ -15,7 +15,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPOutputStream
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.runBlocking
 
 /**
  * Tests the SQLite FTS index that powers offline search, including the gzip pack importer used by
@@ -165,10 +169,58 @@ class SearchIndexTest {
     }
 
     @Test
-    fun `repository explains an empty index instead of returning nothing silently`() {
+    fun `repository explains an empty index instead of returning nothing silently`() = runBlocking {
         val repository = SearchRepository(index)
         assertTrue(repository.search("Andorra").isEmpty())
         assertNotNull(repository.lastCoverageNote)
         assertTrue(repository.lastCoverageNote!!.contains("No offline search data"))
+    }
+
+    /**
+     * Every repository call opens and reads the SQLite file, so none of them may run on the
+     * caller's thread - for search that thread is the main thread (OPTIMIZATION.md A-02).
+     *
+     * The dispatcher here counts hops and runs the block inline, so the test stays single-threaded
+     * while still proving the work goes through the dispatcher instead of executing where it was
+     * called from.
+     */
+    @Test
+    fun `every repository call is dispatched through the injected io dispatcher`() = runBlocking {
+        val dispatcher = CountingDispatcher()
+        val repository = SearchRepository(index, dispatcher)
+        val file = writePack(listOf(PlaceRecord("n1", "Ordino", "town", 42.5562, 1.5335)))
+
+        repository.importPack("andorra", file)
+        repository.search("Ordino")
+        repository.nearby(GeoPoint(42.5562, 1.5335))
+        repository.indexSize()
+        repository.removeRegion("andorra")
+        repository.clear()
+
+        assertEquals(
+            "every repository call must hop to the io dispatcher, saw ${dispatcher.dispatches.get()}",
+            6,
+            dispatcher.dispatches.get(),
+        )
+    }
+
+    @Test
+    fun `repository returns hits and clears regions through the io dispatcher`() = runBlocking {
+        val repository = SearchRepository(index, CountingDispatcher())
+        repository.importPack("andorra", writePack(listOf(PlaceRecord("n1", "Ordino", "town", 42.5562, 1.5335))))
+        assertTrue(repository.search("Ord").isNotEmpty())
+        assertEquals(1, repository.indexSize())
+        repository.removeRegion("andorra")
+        assertTrue(repository.search("Ord").isEmpty())
+    }
+
+    /** Counts dispatches and runs them inline, so the test needs no second thread. */
+    private class CountingDispatcher : CoroutineDispatcher() {
+        val dispatches = AtomicInteger()
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            dispatches.incrementAndGet()
+            block.run()
+        }
     }
 }

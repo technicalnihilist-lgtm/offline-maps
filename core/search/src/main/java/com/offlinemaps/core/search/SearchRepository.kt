@@ -5,6 +5,9 @@ import com.offlinemaps.core.common.PlaceResult
 import com.offlinemaps.core.common.SearchSource
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Search facade used by the UI.
@@ -12,45 +15,56 @@ import java.util.Locale
  * Order of resolution: a typed coordinate pair wins (the user was explicit), then the offline
  * index. When the index is empty we return an empty list plus [lastCoverageNote] so the UI can say
  * "no downloaded places here" instead of pretending nothing exists.
+ *
+ * Every call is a suspending function and runs on [io]: opening the SQLite file, reading it and
+ * importing into it are all disk work, so none of it may happen on the caller's thread (which for
+ * search is the main thread). That also means the index database is opened for the first time on
+ * [io], never while a frame is being drawn — see OPTIMIZATION.md A-02.
  */
-class SearchRepository(private val index: SearchIndex) {
+class SearchRepository(
+    private val index: SearchIndex,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) {
 
     @Volatile
     var lastCoverageNote: String? = null
         private set
 
-    fun indexSize(): Int = runCatching { index.count() }.getOrDefault(0)
+    suspend fun indexSize(): Int = withContext(io) { sizeBlocking() }
 
-    fun search(query: String, limit: Int = 25): List<PlaceResult> {
+    private fun sizeBlocking(): Int = runCatching { index.count() }.getOrDefault(0)
+
+    suspend fun search(query: String, limit: Int = 25): List<PlaceResult> = withContext(io) {
         val trimmed = query.trim()
-        if (trimmed.length < 2) return emptyList()
+        if (trimmed.length < 2) return@withContext emptyList()
 
         val coordinate = parseCoordinate(trimmed)
         val results = runCatching { index.search(trimmed, limit) }.getOrDefault(emptyList())
         lastCoverageNote = when {
-            indexSize() == 0 ->
+            sizeBlocking() == 0 ->
                 "No offline search data is installed yet. Download a region's places pack to search without internet."
             results.isEmpty() ->
                 "Nothing matched in your downloaded map data. Try another spelling, or download a nearby region."
             else -> null
         }
-        return if (coordinate != null) {
+        if (coordinate != null) {
             listOf(coordinate) + results.filterNot { it.id == coordinate.id }
         } else {
             results
         }
     }
 
-    fun nearby(center: GeoPoint, radiusMeters: Double = 1500.0, limit: Int = 40): List<PlaceResult> =
-        runCatching { index.nearby(center, radiusMeters, limit) }.getOrDefault(emptyList())
+    suspend fun nearby(center: GeoPoint, radiusMeters: Double = 1500.0, limit: Int = 40): List<PlaceResult> =
+        withContext(io) {
+            runCatching { index.nearby(center, radiusMeters, limit) }.getOrDefault(emptyList())
+        }
 
-    fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}) {
-        index.importPack(regionId, file, onProgress)
-    }
+    suspend fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}) =
+        withContext(io) { index.importPack(regionId, file, onProgress) }
 
-    fun removeRegion(regionId: String) = index.deleteRegion(regionId)
+    suspend fun removeRegion(regionId: String) = withContext(io) { index.deleteRegion(regionId) }
 
-    fun clear() = index.clearAll()
+    suspend fun clear() = withContext(io) { index.clearAll() }
 
     companion object {
         private val COORDINATE = Regex(
