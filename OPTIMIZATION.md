@@ -19,7 +19,7 @@ Rules for every item:
 
 ## A · Startup and first frame
 
-- [ ] A-01 Lazy-initialise `ServiceLocator` members that the first screen does not need (Room, search index, download engine), so cold start does not touch disk for them.
+- [x] A-01 Lazy-initialise `ServiceLocator` members that the first screen does not need (Room, search index, download engine), so cold start does not touch disk for them.
 - [ ] A-02 Move `SearchIndex` database opening off the main thread; assert with StrictMode in debug builds that no disk I/O happens on the main thread during startup.
 - [ ] A-03 Defer `MapLibre.getInstance` and style construction until the map view is actually attached, and measure the difference in startup time.
 - [ ] A-04 Cache the generated style JSON in memory keyed by (theme, quality, terrain, buildings) instead of rebuilding the string on every call.
@@ -124,3 +124,4 @@ Rules for every item:
 | Date | Item | What changed | CI run |
 |---|---|---|---|
 | — | — | backlog created | — |
+| 2026-11-01 | A-01 | Cold start no longer touches the download path: `ServiceLocator` members were already lazy, so the eager part was `OfflineMapsApp.onCreate` calling `restorePendingDownloads()`, which read the download table and could build `DownloadManager` + `OkHttpClient` + storage probe before the first frame. The restore now runs from `MainActivity` off a `decorView` post (once per process, and it skips building the engine when nothing is resumable); new `ServiceLocatorLazinessTest` pins the laziness down. versionCode 6 / 1.0.5. | https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/41285453638 |
