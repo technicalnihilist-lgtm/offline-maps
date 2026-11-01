@@ -47,6 +47,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // Interrupted downloads are resumed once the first frame is laid out, never during cold
+        // start: the restore would otherwise construct the download engine and read the download
+        // table before the map has been drawn. It is a no-op after the first call per process.
+        window.decorView.post { locator.restorePendingDownloads() }
     }
 }
 
