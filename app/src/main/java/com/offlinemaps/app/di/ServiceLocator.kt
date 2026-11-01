@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Hand-rolled dependency wiring.
@@ -35,12 +36,19 @@ import java.util.concurrent.TimeUnit
  * A DI framework would add build time and a reflection layer for very little benefit at this size,
  * so everything is constructed once here and handed to view models. It also makes the dependency
  * direction obvious: UI depends on core, never the other way round.
+ *
+ * Every member is lazy: constructing the locator itself costs nothing and touches no disk, so
+ * cold start only pays for the services the first screen actually asks for. Keep it that way —
+ * nothing here may be initialised eagerly from `Application.onCreate`.
  */
 class ServiceLocator(val appContext: Context) {
 
     private val context: Context get() = appContext
 
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Guards [restorePendingDownloads] so the restore happens at most once per process. */
+    private val restoreRequested = AtomicBoolean(false)
 
     val database: AppDatabase by lazy { AppDatabase.get(context) }
     val settings: SettingsStore by lazy { SettingsStore(context) }
@@ -108,13 +116,23 @@ class ServiceLocator(val appContext: Context) {
         MapPackageType.TILE_REGION -> "tiles"
     }
 
-    /** Re-queues downloads that were interrupted by a process death or reboot. */
+    /**
+     * Re-queues downloads that were interrupted by a process death or reboot.
+     *
+     * Deliberately not called from [android.app.Application.onCreate]: the restore is worth nothing
+     * to the first frame, so it runs once the UI is up (see `MainActivity`). Even then it stays
+     * lazy — the download table is the only thing read when there is nothing to resume, and
+     * [downloadManager] (with its HTTP client and storage probe) is only built once a record is
+     * actually found. Repeated calls are no-ops, so a recreated activity cannot queue a download
+     * twice.
+     */
     fun restorePendingDownloads() {
+        if (!restoreRequested.compareAndSet(false, true)) return
         applicationScope.launch {
-            downloadRecords.pending().forEach { record ->
-                if (record.status == DownloadStatus.PAUSED) return@forEach
-                downloadManager.start(downloadRequestFor(record), settings.current().wifiOnlyDownloads)
-            }
+            val resumable = downloadRecords.pending().filter { it.status != DownloadStatus.PAUSED }
+            if (resumable.isEmpty()) return@launch
+            val wifiOnly = settings.current().wifiOnlyDownloads
+            resumable.forEach { record -> downloadManager.start(downloadRequestFor(record), wifiOnly) }
         }
     }
 

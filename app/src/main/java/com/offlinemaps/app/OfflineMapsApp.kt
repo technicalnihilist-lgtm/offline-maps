@@ -13,8 +13,10 @@ class OfflineMapsApp : Application() {
         super.onCreate()
         // MapLibre needs a single process-wide initialisation before any MapView is created.
         MapLibre.getInstance(this)
+        // Nothing else happens here on purpose: the locator is lazy, and the restore of
+        // interrupted downloads is deferred to the first frame (see MainActivity) so cold start
+        // does not build the download engine or query the download table.
         locator = ServiceLocator(this)
-        locator.restorePendingDownloads()
     }
 
     override fun onLowMemory() {
