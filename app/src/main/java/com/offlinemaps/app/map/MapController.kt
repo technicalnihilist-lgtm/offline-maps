@@ -34,8 +34,13 @@ class MapController(private val map: MapLibreMap) {
 
     private var style: Style? = null
 
+    /** What was last pushed to each overlay source, so unchanged geometry is not re-serialised. */
+    private val payloads = OverlayPayloadTracker()
+
     fun onStyleLoaded(style: Style) {
         this.style = style
+        // The overlay sources are (re)created empty below, so nothing is cached for them yet.
+        payloads.reset()
         ensureOverlayLayers(style)
     }
 
@@ -81,51 +86,64 @@ class MapController(private val map: MapLibreMap) {
         )
     }
 
-    /** Shows the user's position with an accuracy ring. Pass null to hide the puck. */
+    /**
+     * Shows the user's position with an accuracy ring. Pass null to hide the puck.
+     *
+     * The document is only rebuilt when the position or the ring radius actually changed - the same
+     * fix arriving twice (a repeated `lastKnown` emission, a recomposition) costs one key compare.
+     */
     fun setUserLocation(point: GeoPoint?, accuracyMeters: Float? = null) {
         val currentStyle = style ?: return
         val source = currentStyle.getSourceAs<GeoJsonSource>(USER_SOURCE) ?: return
         if (point == null) {
-            source.setGeoJson(EMPTY_FEATURES)
+            push(source, USER_SOURCE, HIDDEN_PUCK) { EMPTY_FEATURES }
             return
         }
         val ringRadius = ((accuracyMeters ?: 0f) / 3f).coerceIn(6f, 90f)
-        source.setGeoJson(
+        push(source, USER_SOURCE, UserPuckKey(point, ringRadius)) {
+            val coordinates = coord(point)
             """
             {"type":"FeatureCollection","features":[
               {"type":"Feature","properties":{"kind":"accuracy","radius":$ringRadius},
-               "geometry":{"type":"Point","coordinates":[${coord(point)}]}},
+               "geometry":{"type":"Point","coordinates":[$coordinates]}},
               {"type":"Feature","properties":{"kind":"puck"},
-               "geometry":{"type":"Point","coordinates":[${coord(point)}]}}
+               "geometry":{"type":"Point","coordinates":[$coordinates]}}
             ]}
-            """.trimIndent(),
-        )
+            """.trimIndent()
+        }
     }
 
-    /** Draws the active route. Replaces any previous geometry. */
+    /**
+     * Draws the active route. Replaces any previous geometry.
+     *
+     * The geometry list is compared by value, so the same plan (or a rebuilt but identical copy of
+     * it) is not serialised again - a route of a few thousand points would otherwise format every
+     * coordinate on every call. The last geometry list is held as the comparison key, so treat it
+     * as immutable: the app always passes the plan's own list.
+     */
     fun setRoute(points: List<GeoPoint>) {
         val currentStyle = style ?: return
         val source = currentStyle.getSourceAs<GeoJsonSource>(ROUTE_SOURCE) ?: return
         if (points.size < 2) {
-            source.setGeoJson(EMPTY_FEATURES)
+            push(source, ROUTE_SOURCE, EMPTY_ROUTE_KEY) { EMPTY_FEATURES }
             return
         }
-        val coordinates = points.joinToString(",") { "[${coord(it)}]" }
-        source.setGeoJson(
-            """{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[$coordinates]}}""",
-        )
+        push(source, ROUTE_SOURCE, points) {
+            val coordinates = points.joinToString(",") { "[${coord(it)}]" }
+            """{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[$coordinates]}}"""
+        }
     }
 
     fun setDestination(point: GeoPoint?) {
         val currentStyle = style ?: return
         val source = currentStyle.getSourceAs<GeoJsonSource>(DESTINATION_SOURCE) ?: return
         if (point == null) {
-            source.setGeoJson(EMPTY_FEATURES)
+            push(source, DESTINATION_SOURCE, HIDDEN_DESTINATION) { EMPTY_FEATURES }
             return
         }
-        source.setGeoJson(
-            """{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[${coord(point)}]}}""",
-        )
+        push(source, DESTINATION_SOURCE, point) {
+            """{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[${coord(point)}]}}"""
+        }
     }
 
     /** Turns the extruded-building layer on or off without reloading the style. */
@@ -137,6 +155,13 @@ class MapController(private val map: MapLibreMap) {
 
     fun destroy() {
         style = null
+        payloads.reset()
+    }
+
+    /** Pushes [build]'s document to [source] unless the payload for [key] is already in place. */
+    private fun push(source: GeoJsonSource, sourceId: String, key: Any?, build: () -> String) {
+        val payload = payloads.payloadFor(sourceId, key, build) ?: return
+        source.setGeoJson(payload)
     }
 
     private fun ensureOverlayLayers(currentStyle: Style) {
@@ -194,6 +219,9 @@ class MapController(private val map: MapLibreMap) {
         )
     }
 
+    /** Value key for the location puck: the position plus the ring radius derived from accuracy. */
+    private data class UserPuckKey(val point: GeoPoint, val radius: Float)
+
     private fun coord(point: GeoPoint): String =
         String.format(Locale.US, "%.6f,%.6f", point.longitude, point.latitude)
 
@@ -208,5 +236,10 @@ class MapController(private val map: MapLibreMap) {
         const val DESTINATION_LAYER = "app-destination-layer"
         const val BUILDING_LAYER = "building-3d"
         const val EMPTY_FEATURES = """{"type":"FeatureCollection","features":[]}"""
+
+        /** Canonical keys for the "nothing to draw" payload, so hiding a source is also deduped. */
+        val HIDDEN_PUCK = Any()
+        val HIDDEN_DESTINATION = Any()
+        val EMPTY_ROUTE_KEY: List<GeoPoint> = emptyList()
     }
 }
