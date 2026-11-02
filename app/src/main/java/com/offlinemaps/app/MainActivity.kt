@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val trace = StartupTrace.process
+        trace.beginPhase(StartupTrace.PHASE_ACTIVITY_ONCREATE)
         enableEdgeToEdge()
         locator = (application as OfflineMapsApp).locator
 
@@ -47,18 +49,24 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        trace.endPhase(StartupTrace.PHASE_ACTIVITY_ONCREATE)
 
         // Interrupted downloads are resumed once the first frame is laid out, never during cold
         // start: the restore would otherwise construct the download engine and read the download
         // table before the map has been drawn. It is a no-op after the first call per process.
         window.decorView.post {
-            locator.restorePendingDownloads()
-            // Open the search index once, off the main thread, now that the first frame is out, so
-            // the first search does not pay for opening SQLite (OPTIMIZATION.md A-06). It is a
-            // no-op after the first call per process and shows nothing.
-            locator.prewarmSearch()
-            // The first frame is out, so the startup window the debug audit watches is over.
-            StartupIoAudit.finishStartupWindow()
+            trace.firstFrameReached()
+            trace.trace(StartupTrace.PHASE_FIRST_FRAME_WORK) {
+                locator.restorePendingDownloads()
+                // Open the search index once, off the main thread, now that the first frame is out,
+                // so the first search does not pay for opening SQLite (OPTIMIZATION.md A-06). It is
+                // a no-op after the first call per process and shows nothing.
+                locator.prewarmSearch()
+                // The first frame is out, so the startup window the debug audit watches is over.
+                StartupIoAudit.finishStartupWindow()
+            }
+            // Debug builds only: one line with every cold-start phase and the totals.
+            trace.finishStartup()
         }
     }
 }
