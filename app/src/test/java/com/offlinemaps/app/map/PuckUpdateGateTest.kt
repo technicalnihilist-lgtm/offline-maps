@@ -112,8 +112,9 @@ class PuckUpdateGateTest {
             if (gate.shouldPush(fix, 8f)) step else null
         }
 
-        assertThat(acceptedAt.first()).isEqualTo(3)
-        assertThat(gate.skipped).isEqualTo(2)
+        // 3.3 m is past the threshold, and so is the next step that is 3.3 m beyond *that*.
+        assertThat(acceptedAt).containsExactly(3, 6).inOrder()
+        assertThat(gate.skipped).isEqualTo(4)
     }
 
     @Test
