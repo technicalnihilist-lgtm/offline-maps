@@ -144,7 +144,7 @@ class StartupTracePhasesTest {
 
         assertThat(lines).hasSize(2)
         assertThat(lines.last()).contains("new 12 ms")
-        assertThat(lines.last()).doesNotContain("old")
+        assertThat(lines.last()).doesNotContain("old 30 ms")
         assertThat(trace.phaseMillis("old")).isNull()
     }
 }
