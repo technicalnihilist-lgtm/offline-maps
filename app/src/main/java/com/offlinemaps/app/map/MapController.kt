@@ -37,10 +37,14 @@ class MapController(private val map: MapLibreMap) {
     /** What was last pushed to each overlay source, so unchanged geometry is not re-serialised. */
     private val payloads = OverlayPayloadTracker()
 
+    /** Drops location fixes the user could not see the difference of (GNSS jitter). */
+    private val puckGate = PuckUpdateGate()
+
     fun onStyleLoaded(style: Style) {
         this.style = style
         // The overlay sources are (re)created empty below, so nothing is cached for them yet.
         payloads.reset()
+        puckGate.reset()
         ensureOverlayLayers(style)
     }
 
@@ -89,16 +93,22 @@ class MapController(private val map: MapLibreMap) {
     /**
      * Shows the user's position with an accuracy ring. Pass null to hide the puck.
      *
-     * The document is only rebuilt when the position or the ring radius actually changed - the same
-     * fix arriving twice (a repeated `lastKnown` emission, a recomposition) costs one key compare.
+     * Two filters keep this cheap on a stream of fixes. [PuckUpdateGate] drops a fix that moved less
+     * than a few metres and did not change the accuracy materially, so a stationary device with a
+     * wandering GNSS position no longer redraws the puck; the overlay tracker then skips a document
+     * that is identical to the one already on screen (a repeated `lastKnown` emission, a
+     * recomposition) after one key compare.
      */
     fun setUserLocation(point: GeoPoint?, accuracyMeters: Float? = null) {
         val currentStyle = style ?: return
         val source = currentStyle.getSourceAs<GeoJsonSource>(USER_SOURCE) ?: return
         if (point == null) {
+            // Nothing on screen to compare a future fix against.
+            puckGate.reset()
             push(source, USER_SOURCE, HIDDEN_PUCK) { EMPTY_FEATURES }
             return
         }
+        if (!puckGate.shouldPush(point, accuracyMeters)) return
         val ringRadius = ((accuracyMeters ?: 0f) / 3f).coerceIn(6f, 90f)
         push(source, USER_SOURCE, UserPuckKey(point, ringRadius)) {
             val coordinates = coord(point)
@@ -156,6 +166,7 @@ class MapController(private val map: MapLibreMap) {
     fun destroy() {
         style = null
         payloads.reset()
+        puckGate.reset()
     }
 
     /** Pushes [build]'s document to [source] unless the payload for [key] is already in place. */
