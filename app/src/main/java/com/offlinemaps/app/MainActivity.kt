@@ -53,6 +53,10 @@ class MainActivity : ComponentActivity() {
         // table before the map has been drawn. It is a no-op after the first call per process.
         window.decorView.post {
             locator.restorePendingDownloads()
+            // Open the search index once, off the main thread, now that the first frame is out, so
+            // the first search does not pay for opening SQLite (OPTIMIZATION.md A-06). It is a
+            // no-op after the first call per process and shows nothing.
+            locator.prewarmSearch()
             // The first frame is out, so the startup window the debug audit watches is over.
             StartupIoAudit.finishStartupWindow()
         }

@@ -214,6 +214,52 @@ class SearchIndexTest {
         assertTrue(repository.search("Ord").isEmpty())
     }
 
+    /** OPTIMIZATION.md A-06: the warm-up opens the index and reports what is in it. */
+    @Test
+    fun `warm-up opens the index and reports the place count`() {
+        index.importPack(
+            "andorra",
+            writePack(
+                listOf(
+                    PlaceRecord("n1", "Andorra la Vella", "town", 42.5069, 1.5212),
+                    PlaceRecord("n2", "Ordino", "town", 42.5562, 1.5335),
+                ),
+            ),
+        )
+        assertEquals(2, index.warmUp())
+        // The warm-up is read-only: it must not change a row.
+        assertEquals(2, index.count())
+        assertTrue(index.search("Andor").isNotEmpty())
+    }
+
+    @Test
+    fun `warm-up of an empty index is harmless and reports zero`() {
+        assertEquals(0, index.warmUp())
+        assertEquals(0, index.count())
+    }
+
+    @Test
+    fun `repository prewarm is one-shot and times the first search`() = runBlocking {
+        val dispatcher = CountingDispatcher()
+        val lines = mutableListOf<String>()
+        val repository = SearchRepository(index, dispatcher, logger = { lines += it })
+        repository.importPack("andorra", writePack(listOf(PlaceRecord("n1", "Ordino", "town", 42.5562, 1.5335))))
+        val dispatchesAfterImport = dispatcher.dispatches.get()
+
+        assertNull(repository.warmupMillis)
+        repository.prewarmIndex()
+        repository.prewarmIndex()
+        assertEquals("the index must be opened once, not per call", dispatchesAfterImport + 1, dispatcher.dispatches.get())
+        assertEquals(1, repository.warmupPlaces)
+        assertNotNull(repository.warmupMillis)
+
+        assertNull(repository.firstSearchMillis)
+        repository.search("Ord")
+        repository.search("Ord")
+        assertNotNull("the first search after the warm-up must be timed", repository.firstSearchMillis)
+        assertTrue("the timings must reach the logger, saw $lines", lines.size >= 2)
+    }
+
     /** Counts dispatches and runs them inline, so the test needs no second thread. */
     private class CountingDispatcher : CoroutineDispatcher() {
         val dispatches = AtomicInteger()

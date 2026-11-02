@@ -94,6 +94,28 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         if (it.moveToFirst()) it.getInt(0) else 0
     }
 
+    /**
+     * Opens the database and reads the index once, so the first real query does not pay for it
+     * (OPTIMIZATION.md A-06).
+     *
+     * Opening the file, loading the FTS segment list and preparing the join are the costs the first
+     * search carries; running a representative prefix query here moves them to a background warm-up
+     * after the first frame. Returns the number of indexed places, so a caller can tell an empty
+     * index (nothing installed yet) from a warmed one. Read-only: it changes no row and no file
+     * beyond SQLite's own page cache.
+     */
+    fun warmUp(): Int {
+        val total = count()
+        if (total > 0) {
+            readableDatabase.rawQuery(
+                "SELECT p.rowid FROM places_fts f JOIN places p ON p.rowid = f.rowid " +
+                    "WHERE places_fts MATCH ? LIMIT 1",
+                arrayOf("a*"),
+            ).use { it.moveToFirst() }
+        }
+        return total
+    }
+
     fun countForRegion(regionId: String): Int =
         readableDatabase.rawQuery("SELECT COUNT(*) FROM places WHERE region_id = ?", arrayOf(regionId)).use {
             if (it.moveToFirst()) it.getInt(0) else 0

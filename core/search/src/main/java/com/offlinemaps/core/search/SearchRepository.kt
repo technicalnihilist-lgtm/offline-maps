@@ -20,15 +20,40 @@ import kotlinx.coroutines.withContext
  * importing into it are all disk work, so none of it may happen on the caller's thread (which for
  * search is the main thread). That also means the index database is opened for the first time on
  * [io], never while a frame is being drawn — see OPTIMIZATION.md A-02.
+ *
+ * [prewarmIndex] moves that first open off the user's first search: it runs once per process, in the
+ * background, and records how long it took and how long the first search takes afterwards
+ * (OPTIMIZATION.md A-06). The timing goes to [logger] and nowhere else.
  */
 class SearchRepository(
     private val index: SearchIndex,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000L },
+    logger: (String) -> Unit = {},
 ) {
+
+    private val prewarm = SearchPrewarm(warm = { index.warmUp() }, clock = clock, logger = logger)
 
     @Volatile
     var lastCoverageNote: String? = null
         private set
+
+    /** Places seen by the one-shot warm-up; null until [prewarmIndex] has run. */
+    val warmupPlaces: Int? get() = prewarm.places
+
+    /** Cost of the one-shot warm-up in milliseconds; null until [prewarmIndex] has run. */
+    val warmupMillis: Long? get() = prewarm.warmupMillis
+
+    /** Cost of the first search after the warm-up in milliseconds; null until one has run. */
+    val firstSearchMillis: Long? get() = prewarm.firstSearchMillis
+
+    /**
+     * Opens and touches the index once per process, on [io]. Safe to call more than once: after the
+     * first call this returns the recorded cost without touching a dispatcher or the disk, so a
+     * recreated activity cannot warm the index twice.
+     */
+    suspend fun prewarmIndex(): Long? =
+        if (prewarm.hasRun) prewarm.warmupMillis else withContext(io) { prewarm.run() }
 
     suspend fun indexSize(): Int = withContext(io) { sizeBlocking() }
 
@@ -38,6 +63,7 @@ class SearchRepository(
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
 
+        val startedAt = clock()
         val coordinate = parseCoordinate(trimmed)
         val results = runCatching { index.search(trimmed, limit) }.getOrDefault(emptyList())
         lastCoverageNote = when {
@@ -47,6 +73,9 @@ class SearchRepository(
                 "Nothing matched in your downloaded map data. Try another spelling, or download a nearby region."
             else -> null
         }
+        // Timed after the coverage count too, so the number is what the user actually waited for
+        // (OPTIMIZATION.md A-06). Only the first search of the process is kept.
+        prewarm.recordSearch(clock() - startedAt)
         if (coordinate != null) {
             listOf(coordinate) + results.filterNot { it.id == coordinate.id }
         } else {

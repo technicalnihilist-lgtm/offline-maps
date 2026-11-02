@@ -1,6 +1,8 @@
 package com.offlinemaps.app.di
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.util.Log
 import com.offlinemaps.core.common.DownloadStatus
 import com.offlinemaps.core.common.MapPackageType
 import com.offlinemaps.core.data.AppDatabase
@@ -59,7 +61,28 @@ class ServiceLocator(val appContext: Context) {
     val installedRegions by lazy { InstalledRegionRepository(database.installedRegionDao()) }
 
     val searchIndex: SearchIndex by lazy { SearchIndex(context) }
-    val search: SearchRepository by lazy { SearchRepository(searchIndex) }
+    val search: SearchRepository by lazy { SearchRepository(searchIndex, logger = ::logSearchTiming) }
+
+    /** Debug builds only: the search warm-up and first-query timings go to logcat. */
+    private val debugBuild: Boolean by lazy {
+        (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
+    private fun logSearchTiming(line: String) {
+        if (debugBuild) Log.d(SEARCH_TAG, line)
+    }
+
+    /**
+     * Opens the offline search index once per process, in the background, so the first search does
+     * not pay for opening SQLite (OPTIMIZATION.md A-06).
+     *
+     * Called once the first frame is out (see `MainActivity`) and never from `Application.onCreate`,
+     * so cold start does not wait for it. It changes no data and shows nothing; the warm-up cost and
+     * the first-query cost are logged in debuggable builds only. Repeated calls are no-ops.
+     */
+    fun prewarmSearch() {
+        applicationScope.launch { search.prewarmIndex() }
+    }
 
     val locationSource by lazy { LocationSource(context) }
     val network by lazy { AndroidNetworkStateProvider(context) }
@@ -138,6 +161,11 @@ class ServiceLocator(val appContext: Context) {
 
     fun onLowMemory() {
         routingEngine.close()
+    }
+
+    companion object {
+        /** Log tag for the search warm-up timings (OPTIMIZATION.md A-06). */
+        private const val SEARCH_TAG = "SearchPrewarm"
     }
 }
 
