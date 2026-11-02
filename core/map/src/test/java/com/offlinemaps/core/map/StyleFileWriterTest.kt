@@ -5,7 +5,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.offlinemaps.core.common.MapTheme
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -22,6 +24,11 @@ import org.robolectric.annotation.Config
 class StyleFileWriterTest {
 
     private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    @Before
+    fun setUp() {
+        StyleFileWriter(context).resetWriteStats()
+    }
 
     @After
     fun tearDown() {
@@ -68,6 +75,86 @@ class StyleFileWriterTest {
             .readText()
         assertTrue("terrain source should be absent", !json.contains("raster-dem"))
         assertEquals(false, json.contains("hillshade"))
+    }
+
+    @Test
+    fun `rewriting unchanged options leaves the file untouched`() {
+        val writer = StyleFileWriter(context)
+        val file = writer.write(StyleOptions(theme = MapTheme.LIGHT))
+        // A sentinel mtime: any real rewrite would stamp the current time over it.
+        assertTrue("could not stamp the file", file.setLastModified(1_000L))
+        val before = file.readText()
+
+        val again = writer.write(StyleOptions(theme = MapTheme.LIGHT))
+
+        assertEquals("same options must resolve to the same file", file.absolutePath, again.absolutePath)
+        assertEquals("the style must not have been rewritten", 1_000L, file.lastModified())
+        assertEquals("content must be unchanged", before, again.readText())
+        assertEquals(1L, writer.writeCount())
+        assertEquals(1L, writer.skippedWriteCount())
+    }
+
+    @Test
+    fun `changed options rewrite the file`() {
+        val writer = StyleFileWriter(context)
+        val withTerrain = writer.write(StyleOptions(theme = MapTheme.LIGHT))
+        val before = withTerrain.readText()
+        assertTrue("could not stamp the file", withTerrain.setLastModified(1_000L))
+
+        val withoutTerrain = writer.write(StyleOptions(theme = MapTheme.LIGHT, showTerrain = false))
+
+        assertEquals(withTerrain.absolutePath, withoutTerrain.absolutePath)
+        assertNotEquals("a different style must be written", before, withoutTerrain.readText())
+        assertNotEquals("a different style must hit the disk", 1_000L, withoutTerrain.lastModified())
+        assertEquals(2L, writer.writeCount())
+        assertEquals(0L, writer.skippedWriteCount())
+    }
+
+    @Test
+    fun `a file that no longer matches is written again`() {
+        val writer = StyleFileWriter(context)
+        val file = writer.write(StyleOptions(theme = MapTheme.DARK))
+        val expected = file.readText()
+
+        // Simulate a truncated file from a killed process: the size check alone must catch it.
+        file.writeText("{}")
+        val rewritten = writer.write(StyleOptions(theme = MapTheme.DARK))
+
+        assertEquals("the full style must be restored", expected, rewritten.readText())
+        assertEquals(2L, writer.writeCount())
+        assertEquals(0L, writer.skippedWriteCount())
+    }
+
+    @Test
+    fun `a deleted style file is recreated`() {
+        val writer = StyleFileWriter(context)
+        val file = writer.write(StyleOptions(theme = MapTheme.LIGHT))
+        val expected = file.readText()
+        assertTrue(file.delete())
+
+        val recreated = writer.write(StyleOptions(theme = MapTheme.LIGHT))
+
+        assertTrue("the style file must come back", recreated.exists())
+        assertEquals(expected, recreated.readText())
+        assertEquals(2L, writer.writeCount())
+        assertEquals(0L, writer.skippedWriteCount())
+    }
+
+    @Test
+    fun `a new writer instance still skips an unchanged file`() {
+        // DownloadsViewModel builds a fresh writer per call, so the decision cannot depend on
+        // instance state; this one has no in-memory record and must hash what is on disk.
+        StyleFileWriter(context).write(StyleOptions(theme = MapTheme.LIGHT))
+        // Drop the in-memory record so the second writer has to hash what is on disk.
+        StyleFileWriter(context).resetWriteStats()
+        val file = java.io.File(StyleFileWriter(context).styleDirectory(), "style-light.json")
+        assertTrue(file.setLastModified(1_000L))
+
+        val second = StyleFileWriter(context)
+        second.write(StyleOptions(theme = MapTheme.LIGHT))
+
+        assertEquals("a fresh writer must not rewrite identical content", 1_000L, file.lastModified())
+        assertEquals(1L, second.skippedWriteCount())
     }
 
     @Test
