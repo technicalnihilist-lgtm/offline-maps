@@ -6,6 +6,7 @@ import com.offlinemaps.core.map.CameraAnimationTracker
 import com.offlinemaps.core.map.CameraMovePolicy
 import com.offlinemaps.core.map.CameraTarget
 import com.offlinemaps.core.map.MapStyleFactory
+import com.offlinemaps.core.map.OverlayLayerPlan
 import com.offlinemaps.core.map.RouteLineSimplifier
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdate
@@ -15,6 +16,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -64,6 +66,14 @@ class MapController(private val map: MapLibreMap) {
 
     /** Points the last drawn route line did not need; diagnostics only. */
     var droppedRoutePoints: Int = 0
+        private set
+
+    /** Overlay sources this controller has added across the styles it has seen; diagnostics only. */
+    var overlaySourcesAdded: Int = 0
+        private set
+
+    /** Overlay layers this controller has added across the styles it has seen; diagnostics only. */
+    var overlayLayersAdded: Int = 0
         private set
 
     fun onStyleLoaded(style: Style) {
@@ -318,25 +328,42 @@ class MapController(private val map: MapLibreMap) {
         source.setGeoJson(payload)
     }
 
+    /**
+     * Gives [currentStyle] the overlay sources and layers it is missing.
+     *
+     * [OverlayLayerPlan.missing] decides what to add by asking the live style about each declared
+     * id, so this is idempotent: a style that already carries the overlays costs five lookups and
+     * no native calls. That is what keeps a route from leaking sources - routing and clearing a
+     * route never add anything, they only write a payload into the route source that is already
+     * there (see [setRoute]). The old code returned as soon as the puck source existed, which left
+     * a style that kept one overlay without the others permanently unable to draw a route.
+     */
     private fun ensureOverlayLayers(currentStyle: Style) {
-        if (currentStyle.getSource(USER_SOURCE) != null) return
+        val install = OverlayLayerPlan.missing(
+            sourceExists = { currentStyle.getSource(it) != null },
+            layerExists = { currentStyle.getLayer(it) != null },
+        )
+        if (install.isEmpty) return
+        install.sources.forEach { currentStyle.addSource(GeoJsonSource(it, EMPTY_FEATURES)) }
+        overlaySourcesAdded += install.sources.size
+        install.layers.forEach { currentStyle.addLayer(buildOverlayLayer(it)) }
+        overlayLayersAdded += install.layers.size
+    }
 
-        currentStyle.addSource(GeoJsonSource(USER_SOURCE, EMPTY_FEATURES))
-        currentStyle.addSource(GeoJsonSource(ROUTE_SOURCE, EMPTY_FEATURES))
-        currentStyle.addSource(GeoJsonSource(DESTINATION_SOURCE, EMPTY_FEATURES))
-
-        currentStyle.addLayer(
-            CircleLayer(ACCURACY_LAYER, USER_SOURCE).apply {
+    /** The overlay layer [spec] describes, with the properties it has always had. */
+    private fun buildOverlayLayer(spec: OverlayLayerPlan.Layer): Layer = when (spec.id) {
+        OverlayLayerPlan.ACCURACY_LAYER ->
+            CircleLayer(spec.id, spec.sourceId).apply {
                 setFilter(Expression.eq(Expression.get("kind"), Expression.literal("accuracy")))
                 withProperties(
                     PropertyFactory.circleRadius(Expression.get("radius")),
                     PropertyFactory.circleColor("#2D7FF9"),
                     PropertyFactory.circleOpacity(0.14f),
                 )
-            },
-        )
-        currentStyle.addLayer(
-            CircleLayer(USER_LAYER, USER_SOURCE).apply {
+            }
+
+        OverlayLayerPlan.USER_LAYER ->
+            CircleLayer(spec.id, spec.sourceId).apply {
                 setFilter(Expression.eq(Expression.get("kind"), Expression.literal("puck")))
                 withProperties(
                     PropertyFactory.circleRadius(7f),
@@ -344,33 +371,34 @@ class MapController(private val map: MapLibreMap) {
                     PropertyFactory.circleStrokeWidth(3f),
                     PropertyFactory.circleStrokeColor("#FFFFFF"),
                 )
-            },
-        )
-        currentStyle.addLayer(
-            LineLayer(ROUTE_CASING, ROUTE_SOURCE).withProperties(
+            }
+
+        OverlayLayerPlan.ROUTE_CASING ->
+            LineLayer(spec.id, spec.sourceId).withProperties(
                 PropertyFactory.lineColor("#0B3D2E"),
                 PropertyFactory.lineWidth(9f),
                 PropertyFactory.lineOpacity(0.55f),
                 PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
                 PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-            ),
-        )
-        currentStyle.addLayer(
-            LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
+            )
+
+        OverlayLayerPlan.ROUTE_LAYER ->
+            LineLayer(spec.id, spec.sourceId).withProperties(
                 PropertyFactory.lineColor("#2ECC71"),
                 PropertyFactory.lineWidth(5.5f),
                 PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
                 PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-            ),
-        )
-        currentStyle.addLayer(
-            CircleLayer(DESTINATION_LAYER, DESTINATION_SOURCE).withProperties(
+            )
+
+        OverlayLayerPlan.DESTINATION_LAYER ->
+            CircleLayer(spec.id, spec.sourceId).withProperties(
                 PropertyFactory.circleRadius(8f),
                 PropertyFactory.circleColor("#E03E3E"),
                 PropertyFactory.circleStrokeWidth(3f),
                 PropertyFactory.circleStrokeColor("#FFFFFF"),
-            ),
-        )
+            )
+
+        else -> throw IllegalArgumentException("unknown overlay layer ${spec.id}")
     }
 
     /** Value key for the location puck: the position plus the ring radius derived from accuracy. */
@@ -380,14 +408,10 @@ class MapController(private val map: MapLibreMap) {
         String.format(Locale.US, "%.6f,%.6f", point.longitude, point.latitude)
 
     private companion object {
-        const val USER_SOURCE = "app-user-source"
-        const val ROUTE_SOURCE = "app-route-source"
-        const val DESTINATION_SOURCE = "app-destination-source"
-        const val ACCURACY_LAYER = "app-accuracy-layer"
-        const val USER_LAYER = "app-user-layer"
-        const val ROUTE_CASING = "app-route-casing"
-        const val ROUTE_LAYER = "app-route-layer"
-        const val DESTINATION_LAYER = "app-destination-layer"
+        /** One list of overlay ids, shared with the install decision (see [OverlayLayerPlan]). */
+        const val USER_SOURCE = OverlayLayerPlan.USER_SOURCE
+        const val ROUTE_SOURCE = OverlayLayerPlan.ROUTE_SOURCE
+        const val DESTINATION_SOURCE = OverlayLayerPlan.DESTINATION_SOURCE
         /** Emitted by the style generator in every document; only its visibility ever changes. */
         val BUILDING_LAYER = MapStyleFactory.BUILDING_3D_LAYER_ID
         const val EMPTY_FEATURES = """{"type":"FeatureCollection","features":[]}"""
