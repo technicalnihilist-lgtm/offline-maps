@@ -6,6 +6,7 @@ import com.offlinemaps.core.map.CameraAnimationTracker
 import com.offlinemaps.core.map.CameraMovePolicy
 import com.offlinemaps.core.map.CameraTarget
 import com.offlinemaps.core.map.MapStyleFactory
+import com.offlinemaps.core.map.RouteLineSimplifier
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdate
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -59,6 +60,10 @@ class MapController(private val map: MapLibreMap) {
 
     /** Camera moves dropped because they would not have moved the picture; diagnostics only. */
     var skippedMoves: Int = 0
+        private set
+
+    /** Points the last drawn route line did not need; diagnostics only. */
+    var droppedRoutePoints: Int = 0
         private set
 
     fun onStyleLoaded(style: Style) {
@@ -246,6 +251,13 @@ class MapController(private val map: MapLibreMap) {
      * it) is not serialised again - a route of a few thousand points would otherwise format every
      * coordinate on every call. The last geometry list is held as the comparison key, so treat it
      * as immutable: the app always passes the plan's own list.
+     *
+     * What is serialised is the line as it is drawn: [RouteLineSimplifier] thins a long plan to the
+     * points that carry the shape, within a metre of the original, so a motorway run of a few
+     * thousand coordinates becomes a few dozen `String.format` calls instead of a few thousand.
+     * Only this payload is thinned - the plan itself is untouched, so the cumulative distances, the
+     * manoeuvre indices and the navigation tracker keep indexing the full-resolution geometry. The
+     * key stays the plan's own list, so an unchanged plan is still recognised as unchanged.
      */
     fun setRoute(points: List<GeoPoint>) {
         val currentStyle = style ?: return
@@ -255,7 +267,9 @@ class MapController(private val map: MapLibreMap) {
             return
         }
         push(source, ROUTE_SOURCE, points) {
-            val coordinates = points.joinToString(",") { "[${coord(it)}]" }
+            val drawn = RouteLineSimplifier.simplify(points)
+            droppedRoutePoints = points.size - drawn.size
+            val coordinates = drawn.joinToString(",") { "[${coord(it)}]" }
             """{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[$coordinates]}}"""
         }
     }
