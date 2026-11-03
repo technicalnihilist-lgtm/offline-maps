@@ -62,12 +62,14 @@ class CameraMovePolicyTest {
     }
 
     @Test
-    fun `screen distance halves when the zoom goes up by one`() {
+    fun `screen distance doubles when the zoom goes up by one`() {
+        // A deeper zoom shows the same ground offset in more pixels, which is why the threshold has
+        // to be applied at the zoom the move is judged at.
         val from = at(0.0, 0.0)
         val to = at(0.0, 0.01)
-        val near = CameraMovePolicy.screenDistancePx(from, to, 12.0)
-        val closer = CameraMovePolicy.screenDistancePx(from, to, 13.0)
-        assertEquals(near / 2.0, closer, 1e-9)
+        val far = CameraMovePolicy.screenDistancePx(from, to, 12.0)
+        val nearer = CameraMovePolicy.screenDistancePx(from, to, 13.0)
+        assertEquals(far * 2.0, nearer, 1e-9)
     }
 
     @Test
