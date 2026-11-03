@@ -2,10 +2,12 @@ package com.offlinemaps.app.map
 
 import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.MapTheme
+import com.offlinemaps.core.map.CameraAnimationTracker
 import com.offlinemaps.core.map.CameraMovePolicy
 import com.offlinemaps.core.map.CameraTarget
 import com.offlinemaps.core.map.MapStyleFactory
 import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdate
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -49,6 +51,12 @@ class MapController(private val map: MapLibreMap) {
     /** Where the last [moveTo] asked the camera to go, so an unfinished animation is not skipped. */
     private var lastIssuedTarget: CameraTarget? = null
 
+    /** The animated move this object started and has not seen the end of (see [moveTo]). */
+    private val animations = CameraAnimationTracker()
+
+    /** Animated moves that replaced one that had not landed yet; diagnostics only. */
+    val interruptedAnimations: Int get() = animations.interrupted
+
     /** Camera moves dropped because they would not have moved the picture; diagnostics only. */
     var skippedMoves: Int = 0
         private set
@@ -63,6 +71,8 @@ class MapController(private val map: MapLibreMap) {
         buildingsVisible = null
         // The camera may have moved while the style was loading, so nothing is known about it.
         lastIssuedTarget = null
+        // A flight started on the previous style has nothing left to animate onto.
+        cancelInFlightAnimation()
         ensureOverlayLayers(style)
     }
 
@@ -104,7 +114,16 @@ class MapController(private val map: MapLibreMap) {
             .build()
         val update = CameraUpdateFactory.newCameraPosition(position)
         lastIssuedTarget = CameraTarget(target.latitude, target.longitude, zoom, tilt.toDouble(), bearing.toDouble())
-        if (animate) map.animateCamera(update, durationMs) else map.moveCamera(update)
+        // A move issued while another is still flying replaces it rather than queueing behind it:
+        // the old flight is stopped first, so the new one starts from where the camera actually is
+        // instead of from a frame the user never asked for. A snap does this itself.
+        if (animate) {
+            cancelInFlightAnimation()
+            animateCamera(update, durationMs)
+        } else {
+            map.moveCamera(update)
+            animations.reset()
+        }
     }
 
     /**
@@ -141,7 +160,39 @@ class MapController(private val map: MapLibreMap) {
 
     fun zoomBy(delta: Double, animate: Boolean = true) {
         val update = CameraUpdateFactory.zoomBy(delta)
-        if (animate) map.animateCamera(update, 250) else map.moveCamera(update)
+        if (animate) {
+            // Rapid taps on the zoom buttons: each replaces the previous 250 ms flight.
+            cancelInFlightAnimation()
+            animateCamera(update, ZOOM_DURATION_MS)
+        } else {
+            map.moveCamera(update)
+            animations.reset()
+        }
+    }
+
+    /**
+     * Runs [update] as a tracked animation, so the next move can tell whether one is still flying.
+     *
+     * The token is what makes this safe: MapLibre reports the end of a cancelled flight on the main
+     * looper, i.e. after the move that replaced it has already started, and only the callback whose
+     * token is still current is allowed to end the animation.
+     */
+    private fun animateCamera(update: CameraUpdate, durationMs: Int) {
+        val token = animations.start()
+        map.animateCamera(update, durationMs, object : MapLibreMap.CancelableCallback {
+            override fun onFinish() = animations.finish(token)
+            override fun onCancel() = animations.cancel(token)
+        })
+    }
+
+    /**
+     * Stops the animation in flight, if any, and retires its token so the cancel callback MapLibre
+     * posts afterwards cannot end the animation that replaces it.
+     */
+    private fun cancelInFlightAnimation() {
+        if (!animations.isInFlight) return
+        map.cancelTransitions()
+        animations.reset()
     }
 
     fun cameraState(): MapCameraState {
@@ -239,6 +290,8 @@ class MapController(private val map: MapLibreMap) {
     }
 
     fun destroy() {
+        // Nothing should keep flying onto a map that is being torn down.
+        cancelInFlightAnimation()
         style = null
         payloads.reset()
         puckGate.reset()
@@ -324,6 +377,9 @@ class MapController(private val map: MapLibreMap) {
         /** Emitted by the style generator in every document; only its visibility ever changes. */
         val BUILDING_LAYER = MapStyleFactory.BUILDING_3D_LAYER_ID
         const val EMPTY_FEATURES = """{"type":"FeatureCollection","features":[]}"""
+
+        /** Duration of the zoom-button animation, as before. */
+        const val ZOOM_DURATION_MS = 250
 
         /** Canonical keys for the "nothing to draw" payload, so hiding a source is also deduped. */
         val HIDDEN_PUCK = Any()
