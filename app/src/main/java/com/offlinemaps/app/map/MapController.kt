@@ -2,6 +2,8 @@ package com.offlinemaps.app.map
 
 import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.MapTheme
+import com.offlinemaps.core.map.CameraMovePolicy
+import com.offlinemaps.core.map.CameraTarget
 import com.offlinemaps.core.map.MapStyleFactory
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -44,6 +46,13 @@ class MapController(private val map: MapLibreMap) {
     /** Last visibility written to the extruded-building layer, so a repeat call is not pushed. */
     private var buildingsVisible: Boolean? = null
 
+    /** Where the last [moveTo] asked the camera to go, so an unfinished animation is not skipped. */
+    private var lastIssuedTarget: CameraTarget? = null
+
+    /** Camera moves dropped because they would not have moved the picture; diagnostics only. */
+    var skippedMoves: Int = 0
+        private set
+
     fun onStyleLoaded(style: Style) {
         this.style = style
         // The overlay sources are (re)created empty below, so nothing is cached for them yet.
@@ -52,6 +61,8 @@ class MapController(private val map: MapLibreMap) {
         // The new style carries whatever visibility its document was generated with, which this
         // object cannot know, so the next call must write rather than be skipped as a repeat.
         buildingsVisible = null
+        // The camera may have moved while the style was loading, so nothing is known about it.
+        lastIssuedTarget = null
         ensureOverlayLayers(style)
     }
 
@@ -66,6 +77,13 @@ class MapController(private val map: MapLibreMap) {
         }
     }
 
+    /**
+     * Moves the camera. [animate] moves run an animation on the renderer; one that would land
+     * within a few pixels of where the camera already is and change nothing else is skipped
+     * outright, because the frames it would spend are the frames of an invisible transition (see
+     * [CameraMovePolicy]). A snap ([animate] = false) is always applied - it is used to place the
+     * camera the first time a style loads, where "already close enough" cannot be assumed.
+     */
     fun moveTo(
         target: GeoPoint,
         zoom: Double,
@@ -74,6 +92,10 @@ class MapController(private val map: MapLibreMap) {
         animate: Boolean = true,
         durationMs: Int = 650,
     ) {
+        if (animate && isRedundantMove(target, zoom, tilt, bearing)) {
+            skippedMoves++
+            return
+        }
         val position = CameraPosition.Builder()
             .target(LatLng(target.latitude, target.longitude))
             .zoom(zoom)
@@ -81,7 +103,40 @@ class MapController(private val map: MapLibreMap) {
             .bearing(bearing.toDouble())
             .build()
         val update = CameraUpdateFactory.newCameraPosition(position)
+        lastIssuedTarget = CameraTarget(target.latitude, target.longitude, zoom, tilt.toDouble(), bearing.toDouble())
         if (animate) map.animateCamera(update, durationMs) else map.moveCamera(update)
+    }
+
+    /**
+     * True when an animated move to the requested camera cannot change the picture.
+     *
+     * [CameraMovePolicy] answers that from the camera's current position, but the current position
+     * of a map mid-animation is the interpolated frame, not a resting place: a request that happens
+     * to sit within a few pixels of it would otherwise be dropped while the previous animation went
+     * on to finish somewhere else. So a move is only dropped when the last move this object issued
+     * has already landed (the camera is at that target), which is also true when no move was ever
+     * issued. A camera the user panned away is not at the issued target, so the gate stays open and
+     * the move is made as before.
+     */
+    private fun isRedundantMove(target: GeoPoint, zoom: Double, tilt: Float, bearing: Float): Boolean {
+        val requested = CameraTarget(target.latitude, target.longitude, zoom, tilt.toDouble(), bearing.toDouble())
+        val current = currentCameraTarget() ?: return false
+        val issued = lastIssuedTarget
+        if (issued != null && !CameraMovePolicy.isRedundant(current, issued)) return false
+        return CameraMovePolicy.isRedundant(current, requested)
+    }
+
+    /** The camera as it is drawn right now, or null when MapLibre has no target yet. */
+    private fun currentCameraTarget(): CameraTarget? {
+        val position = map.cameraPosition
+        val target = position.target ?: return null
+        return CameraTarget(
+            latitude = target.latitude,
+            longitude = target.longitude,
+            zoom = position.zoom,
+            tilt = position.tilt,
+            bearing = position.bearing,
+        )
     }
 
     fun zoomBy(delta: Double, animate: Boolean = true) {
@@ -187,6 +242,7 @@ class MapController(private val map: MapLibreMap) {
         style = null
         payloads.reset()
         puckGate.reset()
+        lastIssuedTarget = null
     }
 
     /** Pushes [build]'s document to [source] unless the payload for [key] is already in place. */
