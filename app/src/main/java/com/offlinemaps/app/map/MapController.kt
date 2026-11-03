@@ -2,6 +2,7 @@ package com.offlinemaps.app.map
 
 import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.MapTheme
+import com.offlinemaps.core.map.MapStyleFactory
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -40,13 +41,22 @@ class MapController(private val map: MapLibreMap) {
     /** Drops location fixes the user could not see the difference of (GNSS jitter). */
     private val puckGate = PuckUpdateGate()
 
+    /** Last visibility written to the extruded-building layer, so a repeat call is not pushed. */
+    private var buildingsVisible: Boolean? = null
+
     fun onStyleLoaded(style: Style) {
         this.style = style
         // The overlay sources are (re)created empty below, so nothing is cached for them yet.
         payloads.reset()
         puckGate.reset()
+        // The new style carries whatever visibility its document was generated with, which this
+        // object cannot know, so the next call must write rather than be skipped as a repeat.
+        buildingsVisible = null
         ensureOverlayLayers(style)
     }
+
+    /** True once a style document has loaded, so layer-property writes will actually take effect. */
+    fun hasStyleLoaded(): Boolean = style != null
 
     /** Applies a generated style document. Overlay layers are re-created on the new style. */
     fun applyStyle(styleJson: String, theme: MapTheme, onLoaded: () -> Unit = {}) {
@@ -156,11 +166,21 @@ class MapController(private val map: MapLibreMap) {
         }
     }
 
-    /** Turns the extruded-building layer on or off without reloading the style. */
+    /**
+     * Turns the extruded-building layer on or off without reloading the style.
+     *
+     * The layer is always part of the generated document (hidden when the setting is off), so this
+     * is one layout-property write on the live style: no style rebuild, no re-creation of the
+     * overlay sources, no tile re-request, and the camera stays exactly where it was. A hidden layer
+     * draws nothing, so the frame is what a reloaded style would have produced. Repeated calls with
+     * the same value are dropped, because the native write is not free.
+     */
     fun setBuildingsVisible(visible: Boolean) {
-        style?.getLayer(BUILDING_LAYER)?.setProperties(
-            PropertyFactory.visibility(if (visible) Property.VISIBLE else Property.NONE),
-        )
+        val currentStyle = style ?: return
+        if (buildingsVisible == visible) return
+        val layer = currentStyle.getLayer(BUILDING_LAYER) ?: return
+        layer.setProperties(PropertyFactory.visibility(if (visible) Property.VISIBLE else Property.NONE))
+        buildingsVisible = visible
     }
 
     fun destroy() {
@@ -245,7 +265,8 @@ class MapController(private val map: MapLibreMap) {
         const val ROUTE_CASING = "app-route-casing"
         const val ROUTE_LAYER = "app-route-layer"
         const val DESTINATION_LAYER = "app-destination-layer"
-        const val BUILDING_LAYER = "building-3d"
+        /** Emitted by the style generator in every document; only its visibility ever changes. */
+        val BUILDING_LAYER = MapStyleFactory.BUILDING_3D_LAYER_ID
         const val EMPTY_FEATURES = """{"type":"FeatureCollection","features":[]}"""
 
         /** Canonical keys for the "nothing to draw" payload, so hiding a source is also deduped. */

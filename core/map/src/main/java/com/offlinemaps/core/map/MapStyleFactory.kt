@@ -71,6 +71,13 @@ object MapStyleFactory {
     internal const val MAX_CACHED_STYLES = 8
 
     /**
+     * Id of the extruded-building layer. It is present in every generated document and
+     * [StyleOptions.show3DBuildings] only decides whether it is visible, so the 3D toggle is a
+     * layer-visibility write on the live style instead of a full style reload.
+     */
+    const val BUILDING_3D_LAYER_ID = "building-3d"
+
+    /**
      * Access-ordered LRU of generated documents. [StyleOptions] is a data class over data classes,
      * so its own equals/hashCode already cover every input that can change the output: theme,
      * 3D-building and terrain toggles, the two zoom thresholds and the whole [MapConfig] (tile URLs,
@@ -289,39 +296,44 @@ object MapStyleFactory {
             }
         })
 
-        if (options.show3DBuildings) {
-            add(buildJsonObject {
-                put("id", "building-3d")
-                put("type", "fill-extrusion")
-                put("source", "osm")
-                put("source-layer", "building")
-                put("minzoom", options.buildingsMinZoom)
-                putJsonObject("paint") {
-                    put("fill-extrusion-color", p.building)
-                    // Height: real data first, then a documented estimate (3 m per level, else 4 m).
-                    put(
-                        "fill-extrusion-height",
-                        expr(
-                            "coalesce",
-                            arrayOf("get", "render_height"),
-                            arrayOf("get", "height"),
-                            arrayOf("to-number", arrayOf("*", arrayOf("coalesce", arrayOf("get", "levels"), 3), 3)),
-                            4,
-                        ),
-                    )
-                    put(
-                        "fill-extrusion-base",
-                        expr(
-                            "coalesce",
-                            arrayOf("get", "render_min_height"),
-                            arrayOf("get", "min_height"),
-                            0,
-                        ),
-                    )
-                    put("fill-extrusion-opacity", 0.92)
-                }
-            })
-        }
+        // The extruded layer is always emitted and the 3D toggle drives its `layout.visibility`.
+        // Reloading the style to add or drop a layer rebuilt every layer, re-created the overlay
+        // sources and made MapLibre re-request the tiles the style references; a hidden layer draws
+        // nothing at all, so hiding it renders exactly what leaving it out rendered.
+        add(buildJsonObject {
+            put("id", BUILDING_3D_LAYER_ID)
+            put("type", "fill-extrusion")
+            put("source", "osm")
+            put("source-layer", "building")
+            put("minzoom", options.buildingsMinZoom)
+            putJsonObject("layout") {
+                put("visibility", if (options.show3DBuildings) "visible" else "none")
+            }
+            putJsonObject("paint") {
+                put("fill-extrusion-color", p.building)
+                // Height: real data first, then a documented estimate (3 m per level, else 4 m).
+                put(
+                    "fill-extrusion-height",
+                    expr(
+                        "coalesce",
+                        arrayOf("get", "render_height"),
+                        arrayOf("get", "height"),
+                        arrayOf("to-number", arrayOf("*", arrayOf("coalesce", arrayOf("get", "levels"), 3), 3)),
+                        4,
+                    ),
+                )
+                put(
+                    "fill-extrusion-base",
+                    expr(
+                        "coalesce",
+                        arrayOf("get", "render_min_height"),
+                        arrayOf("get", "min_height"),
+                        0,
+                    ),
+                )
+                put("fill-extrusion-opacity", 0.92)
+            }
+        })
 
         add(layer("place-labels", "symbol") {
             put("source", "osm"); put("source-layer", "place")

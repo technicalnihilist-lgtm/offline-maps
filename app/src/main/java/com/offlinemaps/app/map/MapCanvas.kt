@@ -13,6 +13,7 @@ import com.offlinemaps.app.StartupTrace
 import com.offlinemaps.core.common.MapTheme
 import com.offlinemaps.core.map.MapStyleFactory
 import com.offlinemaps.core.map.StyleOptions
+import com.offlinemaps.core.map.StyleReloadPolicy
 import org.maplibre.android.maps.MapView
 
 /**
@@ -26,7 +27,8 @@ import org.maplibre.android.maps.MapView
  * style document is generated from [styleOptions] only when a style is actually needed (first
  * attach, or when the options really changed). Recomposition passes a small [StyleOptions] value
  * instead of a freshly serialised style string, so the JSON is not built on the main thread for
- * state changes that cannot affect it.
+ * state changes that cannot affect it. A change of the 3D-building flag alone does not rebuild the
+ * style at all - [StyleReloadPolicy] recognises it and the live layer's visibility is toggled.
  */
 @Composable
 fun MapCanvas(
@@ -77,12 +79,20 @@ fun MapCanvas(
             }
         },
         update = { _ ->
-            // The style is only rebuilt and re-applied when the options that produce it change.
+            // The style is only rebuilt and re-applied when the options that produce it change, and
+            // a change that only flips 3D buildings is a layer-visibility write, not a rebuild.
             val controller = controllerRef[0] ?: return@AndroidView
             val pending = optionsRef[0] ?: return@AndroidView
-            if (pending != appliedRef[0]) {
+            val applied = appliedRef[0]
+            if (pending != applied) {
                 appliedRef[0] = pending
-                controller.applyStyle(MapStyleFactory.buildJson(pending), theme)
+                if (applied != null && controller.hasStyleLoaded() &&
+                    StyleReloadPolicy.isBuildingVisibilityOnlyChange(applied, pending)
+                ) {
+                    controller.setBuildingsVisible(pending.show3DBuildings)
+                } else {
+                    controller.applyStyle(MapStyleFactory.buildJson(pending), theme)
+                }
             }
         },
     )
