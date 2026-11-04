@@ -91,6 +91,16 @@ class DownloadManagerTest {
         maxRetries = 1,
     )
 
+    private fun managerWithSeed(seed: Int) = DownloadManager(
+        client = OkHttpClient(),
+        store = store,
+        storage = storage,
+        network = network,
+        scope = scope,
+        maxRetries = 1,
+        random = kotlin.random.Random(seed),
+    )
+
     private fun request(sha256: String? = null, expectedBytes: Long = 0) = DownloadRequest(
         packageKey = "test-pkg",
         regionId = "test-region",
@@ -404,6 +414,45 @@ class DownloadManagerTest {
         assertTrue("the throttling must actually skip writes", progressWrites < chunks)
         assertEquals(DownloadStatus.COMPLETED, store.find("test-pkg")?.status)
         assertEquals(body.size.toLong(), File(targetDir, "file.pbf").length())
+    }
+
+    @Test
+    fun `retry backoff stays inside its jitter window and is decorrelated`() {
+        val a = managerWithSeed(1)
+        val b = managerWithSeed(2)
+        for (attempt in 1..6) {
+            val ceiling = a.backoffCeilingMillis(attempt)
+            val floor = ceiling / 2
+            val samples = (1..64).map { a.backoffMillis(attempt) }
+            assertTrue(
+                "attempt $attempt: every delay must be within [$floor, $ceiling], saw ${samples.min()}..${samples.max()}",
+                samples.all { it in floor..ceiling },
+            )
+            assertTrue(
+                "attempt $attempt: the jitter must actually spread the delays, saw only ${samples.toSet()}",
+                samples.toSet().size > 1,
+            )
+            assertTrue(
+                "attempt $attempt: the backoff must not collapse to a zero delay",
+                samples.min() > 0,
+            )
+        }
+        // Two engines started at the same moment must not retry on the same beat.
+        val firstA = (1..8).map { a.backoffMillis(4) }
+        val firstB = (1..8).map { b.backoffMillis(4) }
+        assertTrue("two seeds must not produce an identical retry schedule", firstA != firstB)
+    }
+
+    @Test
+    fun `retry backoff ceiling keeps the original exponential schedule and cap`() {
+        val manager = managerWithSeed(3)
+        assertEquals(500L, manager.backoffCeilingMillis(1))
+        assertEquals(1_000L, manager.backoffCeilingMillis(2))
+        assertEquals(2_000L, manager.backoffCeilingMillis(3))
+        assertEquals(4_000L, manager.backoffCeilingMillis(4))
+        assertEquals(8_000L, manager.backoffCeilingMillis(5))
+        assertEquals(8_000L, manager.backoffCeilingMillis(20))
+        assertTrue("the jitter must never push the delay past the cap", manager.backoffMillis(20) <= 8_000L)
     }
 
     @Test

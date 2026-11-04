@@ -20,6 +20,7 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
+import kotlin.random.Random
 
 /** UI-facing state of one package download. */
 data class DownloadRuntime(
@@ -47,6 +48,7 @@ class DownloadManager(
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis,
     private val maxRetries: Int = 3,
+    private val random: Random = Random.Default,
 ) {
     private val jobs = ConcurrentHashMap<String, Job>()
 
@@ -474,5 +476,33 @@ class DownloadManager(
         }
     }
 
-    private fun backoffMillis(attempt: Int): Long = (500L * (1 shl (attempt - 1))).coerceAtMost(8_000L)
+    /**
+     * Exponential ceiling for a retry, unchanged from the original schedule: 500 ms, 1 s, 2 s,
+     * 4 s, then flat at 8 s. Only the ceiling is computed here; the delay actually slept is jittered.
+     */
+    internal fun backoffCeilingMillis(attempt: Int): Long {
+        // Guard the shift so a large attempt count cannot overflow into a negative delay.
+        val shift = (attempt - 1).coerceIn(0, 16)
+        return (BASE_BACKOFF_MILLIS * (1L shl shift)).coerceAtMost(MAX_BACKOFF_MILLIS)
+    }
+
+    /**
+     * "Equal jitter": half of the ceiling is a fixed floor and the other half is drawn at random,
+     * so the delay lands in [ceiling/2, ceiling].
+     *
+     * Without the random half every device that lost the same link retries on the same beat and
+     * hits the server in a synchronised wave, which keeps the link saturated after an outage.
+     * Spreading the retries over the second half of the window decorrelates them while still
+     * backing off at least as far as the old fixed schedule's midpoint.
+     */
+    internal fun backoffMillis(attempt: Int): Long {
+        val ceiling = backoffCeilingMillis(attempt)
+        val floor = ceiling / 2
+        return floor + random.nextLong(ceiling - floor + 1)
+    }
+
+    private companion object {
+        const val BASE_BACKOFF_MILLIS = 500L
+        const val MAX_BACKOFF_MILLIS = 8_000L
+    }
 }
