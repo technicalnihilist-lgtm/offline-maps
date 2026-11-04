@@ -292,7 +292,7 @@ class DownloadManager(
                 var windowStart = now()
                 var windowBytes = written
                 var lastRate = 0L
-                var lastPublish = 0L
+                val publishGate = ProgressPublishGate()
 
                 body.byteStream().use { input ->
                     while (isActive) {
@@ -306,13 +306,14 @@ class DownloadManager(
                             windowStart = t
                             windowBytes = written
                         }
-                        if (t - lastPublish >= 250) {
-                            lastPublish = t
-                            publishProgress(request, written, total, lastRate)
+                        val publish = publishGate.decide(t)
+                        if (publish.publishUi) {
+                            publishProgress(request, written, total, lastRate, persist = publish.persist)
                         }
                     }
                 }
-                publishProgress(request, written, total, lastRate)
+                // The transfer is over, so the store must end up holding the final byte count.
+                publishProgress(request, written, total, lastRate, persist = true)
             }
         }
     }
@@ -374,7 +375,13 @@ class DownloadManager(
         }
     }
 
-    private suspend fun publishProgress(request: DownloadRequest, written: Long, total: Long, rate: Long) {
+    private suspend fun publishProgress(
+        request: DownloadRequest,
+        written: Long,
+        total: Long,
+        rate: Long,
+        persist: Boolean,
+    ) {
         if (pausedKeys.contains(request.packageKey)) return
         val eta = if (rate > 0 && total > written) (total - written) / rate else null
         _states.update {
@@ -384,7 +391,9 @@ class DownloadManager(
                 progress = DownloadProgress(request.packageKey, written, total, rate, eta),
             ))
         }
-        store.update(request.packageKey, DownloadStatus.RUNNING, written, null)
+        // The UI state above is republished on every tick; the durable row is not. Nothing on the
+        // resume path depends on it being current: a resume re-measures the .part file.
+        if (persist) store.update(request.packageKey, DownloadStatus.RUNNING, written, null)
     }
 
     private suspend fun fail(request: DownloadRequest, kind: DownloadFailureKind, message: String) {

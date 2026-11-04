@@ -52,6 +52,20 @@ class DownloadManagerTest {
         override fun availableBytes(directory: File) = available
     }
 
+    /** Counts the durable writes the engine makes, so the throttling can be asserted. */
+    private class CountingStore(private val delegate: DownloadStore) : DownloadStore {
+        val updates = java.util.concurrent.atomic.AtomicInteger(0)
+
+        override suspend fun find(key: String): DownloadEntry? = delegate.find(key)
+        override suspend fun save(entry: DownloadEntry) = delegate.save(entry)
+        override suspend fun update(key: String, status: DownloadStatus, bytes: Long, error: String?) {
+            updates.incrementAndGet()
+            delegate.update(key, status, bytes, error)
+        }
+        override suspend fun delete(key: String) = delegate.delete(key)
+        override suspend fun pending(): List<DownloadEntry> = delegate.pending()
+    }
+
     @Before
     fun setUp() {
         server = MockWebServer().apply { start() }
@@ -246,6 +260,38 @@ class DownloadManagerTest {
         manager.cancel("test-pkg")
         delay(400)
         assertEquals(null, store.find("test-pkg"))
+    }
+
+    @Test
+    fun `progress reaches the store far less often than it reaches the ui`() = runBlocking {
+        val body = ByteArray(1024 * 1024) { (it % 251).toByte() }
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(body)))
+        val counting = CountingStore(store)
+        // A clock that advances one second per read, so the cadence is exercised deterministically
+        // instead of by sleeping: every chunk is a UI publish, only every other one may persist.
+        val clockReads = java.util.concurrent.atomic.AtomicInteger(0)
+        val manager = DownloadManager(
+            client = OkHttpClient(),
+            store = counting,
+            storage = storage,
+            network = network,
+            scope = scope,
+            now = { clockReads.incrementAndGet() * 1_000L },
+            maxRetries = 1,
+        )
+        manager.start(request(sha256 = sha256(body), expectedBytes = body.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+
+        val chunks = clockReads.get() - 1 // one read for the rate window, then one per chunk
+        assertTrue("expected several chunks, saw $chunks", chunks >= 4)
+        val progressWrites = counting.updates.get() - 1 // minus the VERIFYING write
+        assertTrue(
+            "progress writes to the store ($progressWrites) should be well under UI publishes ($chunks)",
+            progressWrites <= chunks / 2 + 1,
+        )
+        assertEquals(DownloadStatus.COMPLETED, store.find("test-pkg")?.status)
+        assertEquals(body.size.toLong(), File(targetDir, "file.pbf").length())
     }
 
     @Test
