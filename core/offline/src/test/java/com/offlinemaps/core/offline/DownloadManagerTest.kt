@@ -104,6 +104,11 @@ class DownloadManagerTest {
         targetDirectory = targetDir,
     )
 
+    /** Writes the `<name>.meta` sidecar the way a previous run of the engine would have. */
+    private fun writeMeta(etag: String?, lastModified: String?, totalBytes: Long) {
+        File(targetDir, "file.pbf.meta").writeText("${etag ?: ""}\n${lastModified ?: ""}\n$totalBytes")
+    }
+
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
@@ -156,6 +161,7 @@ class DownloadManagerTest {
         val full = ByteArray(4096) { (it % 251).toByte() }
         val alreadyHave = 1024
         File(targetDir, "file.pbf.part").writeBytes(full.copyOfRange(0, alreadyHave))
+        writeMeta(etag = "\"v1\"", lastModified = null, totalBytes = full.size.toLong())
         server.enqueue(
             MockResponse()
                 .setResponseCode(206)
@@ -167,8 +173,108 @@ class DownloadManagerTest {
         val runtime = awaitTerminal(manager)
 
         assertEquals(DownloadStatus.COMPLETED, runtime.status)
-        assertEquals("bytes=$alreadyHave-", server.takeRequest().getHeader("Range"))
+        val sent = server.takeRequest()
+        assertEquals("bytes=$alreadyHave-", sent.getHeader("Range"))
+        assertEquals("the recorded ETag must validate the resume", "\"v1\"", sent.getHeader("If-Range"))
         assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+        assertTrue("the sidecar is consumed on success", !File(targetDir, "file.pbf.meta").exists())
+    }
+
+    @Test
+    fun `resumes with an if range date when only last modified was recorded`() = runBlocking {
+        val full = ByteArray(4096) { (it % 251).toByte() }
+        val alreadyHave = 2048
+        val date = "Wed, 21 Oct 2015 07:28:00 GMT"
+        File(targetDir, "file.pbf.part").writeBytes(full.copyOfRange(0, alreadyHave))
+        writeMeta(etag = null, lastModified = date, totalBytes = full.size.toLong())
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .setHeader("Content-Range", "bytes $alreadyHave-${full.size - 1}/${full.size}")
+                .setBody(okio.Buffer().write(full.copyOfRange(alreadyHave, full.size))),
+        )
+        val manager = manager()
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        val sent = server.takeRequest()
+        assertEquals("bytes=$alreadyHave-", sent.getHeader("Range"))
+        assertEquals("a server without an ETag must still validate the resume", date, sent.getHeader("If-Range"))
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+    }
+
+    @Test
+    fun `a partial with no recorded validator is refetched instead of spliced`() = runBlocking {
+        val full = ByteArray(2048) { (it % 89).toByte() }
+        // Left behind by something that wrote bytes but no sidecar: nothing to validate against.
+        File(targetDir, "file.pbf.part").writeBytes(ByteArray(1024) { 0 })
+        server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(full)))
+        val manager = manager()
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        val sent = server.takeRequest()
+        assertEquals("an unvalidated partial must not be resumed", null, sent.getHeader("Range"))
+        assertEquals(null, sent.getHeader("If-Range"))
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+    }
+
+    @Test
+    fun `a changed upstream file restarts cleanly when the validator no longer matches`() = runBlocking {
+        val full = ByteArray(2048) { (it % 53).toByte() }
+        File(targetDir, "file.pbf.part").writeBytes(ByteArray(512) { 9 })
+        writeMeta(etag = "\"old\"", lastModified = null, totalBytes = full.size.toLong())
+        // If-Range did not match upstream, so the server answers with the whole new file.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(full)))
+        val manager = manager()
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        val sent = server.takeRequest()
+        assertEquals("bytes=512-", sent.getHeader("Range"))
+        assertEquals("\"old\"", sent.getHeader("If-Range"))
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+    }
+
+    @Test
+    fun `a partial longer than the file it belongs to is discarded`() = runBlocking {
+        val full = ByteArray(1024) { (it % 31).toByte() }
+        File(targetDir, "file.pbf.part").writeBytes(ByteArray(4096) { 1 })
+        writeMeta(etag = "\"v1\"", lastModified = null, totalBytes = 2048L)
+        server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(full)))
+        val manager = manager()
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        assertEquals("an over-long partial must not be resumed", null, server.takeRequest().getHeader("Range"))
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+    }
+
+    @Test
+    fun `the validator is written next to the part file before the body arrives`() = runBlocking {
+        val body = ByteArray(64 * 1024) { 5 }
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("ETag", "\"abc123\"")
+                .setHeader("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+                .setBody(okio.Buffer().write(body))
+                .throttleBody(2048, 50, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        val manager = manager()
+        manager.start(request(expectedBytes = body.size.toLong()), wifiOnly = false)
+        delay(300)
+
+        val metaFile = File(targetDir, "file.pbf.meta")
+        assertTrue("the sidecar must exist while the transfer runs", metaFile.exists())
+        val stored = ResumeMeta.parse(metaFile.readText())
+        assertEquals("\"abc123\"", stored.etag)
+        assertEquals("Wed, 21 Oct 2015 07:28:00 GMT", stored.lastModified)
+        assertEquals(body.size.toLong(), stored.totalBytes)
+        assertEquals("\"abc123\"", stored.validator)
+
+        manager.pause("test-pkg")
+        delay(300)
     }
 
     @Test
