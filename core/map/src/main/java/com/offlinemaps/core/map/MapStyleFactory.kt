@@ -154,7 +154,7 @@ object MapStyleFactory {
                         put("type", "raster-dem")
                         putJsonArray("tiles") { add(options.config.terrainTileUrlTemplate) }
                         put("tileSize", 256)
-                        put("maxzoom", options.maxTerrainZoom)
+                        put("maxzoom", options.effectiveTerrainMaxZoom)
                         put("encoding", "terrarium")
                     }
                 }

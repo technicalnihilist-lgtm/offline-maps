@@ -21,6 +21,7 @@ import com.offlinemaps.core.common.TravelProfile
 import com.offlinemaps.core.data.InstalledRegion
 import com.offlinemaps.core.data.RecentSearch
 import com.offlinemaps.core.data.SavedPlace
+import com.offlinemaps.core.map.MapConfig
 import com.offlinemaps.core.map.StyleOptions
 import com.offlinemaps.core.routing.RouteResult
 import kotlinx.coroutines.Job
@@ -59,6 +60,8 @@ data class MapUiState(
     val profile: TravelProfile = TravelProfile.CAR,
     val installingSample: Boolean = false,
     val sampleMessage: String? = null,
+    /** Tile servers and zoom caps the style is generated from. Comes from `MapConfig`. */
+    val mapConfig: MapConfig = MapConfig.DEFAULT,
 ) {
     /**
      * Inputs the map style is generated from. Cheap to build and comparable, so the map surface can
@@ -70,7 +73,9 @@ data class MapUiState(
             show3DBuildings = buildingsEnabled,
             showTerrain = terrainEnabled,
             buildingsMinZoom = quality.buildingsMinZoom,
-            maxTerrainZoom = 12,
+            // The DEM cap comes from MapConfig (clamped to the Terrarium range by StyleOptions),
+            // not from a literal here, so there is one place to configure it.
+            config = mapConfig,
         )
 
     /** Honest one-line coverage statement shown under the search bar. */
@@ -88,7 +93,7 @@ data class MapUiState(
  */
 class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
 
-    private val _state = MutableStateFlow(MapUiState())
+    private val _state = MutableStateFlow(MapUiState(mapConfig = locator.mapConfig))
     val state: StateFlow<MapUiState> = _state.asStateFlow()
 
     val navigation: StateFlow<NavigationSessionUi?> = locator.navigationManager.session

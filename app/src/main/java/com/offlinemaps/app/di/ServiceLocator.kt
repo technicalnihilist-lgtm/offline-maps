@@ -13,6 +13,7 @@ import com.offlinemaps.core.data.RecentSearchRepository
 import com.offlinemaps.core.data.SavedPlacesRepository
 import com.offlinemaps.core.data.SettingsStore
 import com.offlinemaps.core.location.LocationSource
+import com.offlinemaps.core.map.MapConfig
 import com.offlinemaps.core.map.OfflineRegionController
 import com.offlinemaps.core.offline.AndroidNetworkStateProvider
 import com.offlinemaps.core.offline.AndroidStorageProbe
@@ -51,6 +52,12 @@ class ServiceLocator(val appContext: Context) {
 
     /** Guards [restorePendingDownloads] so the restore happens at most once per process. */
     private val restoreRequested = AtomicBoolean(false)
+
+    /**
+     * Tile servers, attribution and the zoom caps the generated style is built from. A plain value:
+     * it touches no disk and costs nothing to construct.
+     */
+    val mapConfig: MapConfig = MapConfig.DEFAULT
 
     val database: AppDatabase by lazy { AppDatabase.get(context) }
     val settings: SettingsStore by lazy { SettingsStore(context) }

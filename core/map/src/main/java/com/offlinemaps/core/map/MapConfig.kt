@@ -22,7 +22,19 @@ data class MapConfig(
     val styleUrl: String = "https://tiles.openfreemap.org/styles/liberty",
 ) {
     companion object {
+        /**
+         * Deepest zoom the Terrarium elevation set actually publishes. A `raster-dem` source capped
+         * above this asks MapLibre for tiles that do not exist, so the cap is clamped to it.
+         */
+        const val TERRAIN_MAX_ZOOM_CEILING: Int = 15
+
+        /** A DEM source below zoom 0 is meaningless; the floor keeps the emitted style valid. */
+        const val TERRAIN_MAX_ZOOM_FLOOR: Int = 0
+
         val DEFAULT = MapConfig()
+
+        /** The configured DEM cap brought inside the range the Terrarium tile set can serve. */
+        fun clampTerrainZoom(zoom: Int): Int = zoom.coerceIn(TERRAIN_MAX_ZOOM_FLOOR, TERRAIN_MAX_ZOOM_CEILING)
     }
 }
 
@@ -32,6 +44,15 @@ data class StyleOptions(
     val show3DBuildings: Boolean = true,
     val showTerrain: Boolean = true,
     val buildingsMinZoom: Int = 14,
-    val maxTerrainZoom: Int = 12,
+    /**
+     * Optional per-style override of the DEM cap. `null` (the normal case) means "take it from
+     * [config]", so there is one place to configure it. Whatever is used is clamped to the range
+     * the Terrarium tiles cover - see [effectiveTerrainMaxZoom].
+     */
+    val maxTerrainZoom: Int? = null,
     val config: MapConfig = MapConfig.DEFAULT,
-)
+) {
+    /** The DEM `maxzoom` as it is written into the style: the configured value, clamped. */
+    val effectiveTerrainMaxZoom: Int
+        get() = MapConfig.clampTerrainZoom(maxTerrainZoom ?: config.terrainMaxZoom)
+}
