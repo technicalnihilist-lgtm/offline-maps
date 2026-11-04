@@ -392,10 +392,16 @@ class DownloadManagerTest {
         val chunks = clockReads.get() - 1 // one read for the rate window, then one per chunk
         assertTrue("expected several chunks, saw $chunks", chunks >= 4)
         val progressWrites = counting.updates.get() - 1 // minus the VERIFYING write
+        // The gate persists on the first chunk and then once per two seconds, i.e. every other
+        // chunk, so the ceiling is ceil(chunks / 2) gate writes plus the one forced write at the
+        // end of the transfer. An odd chunk count used to push the count one past a floor-based
+        // bound and fail the run for no reason.
+        val ceiling = (chunks + 1) / 2 + 1
         assertTrue(
             "progress writes to the store ($progressWrites) should be well under UI publishes ($chunks)",
-            progressWrites <= chunks / 2 + 1,
+            progressWrites <= ceiling,
         )
+        assertTrue("the throttling must actually skip writes", progressWrites < chunks)
         assertEquals(DownloadStatus.COMPLETED, store.find("test-pkg")?.status)
         assertEquals(body.size.toLong(), File(targetDir, "file.pbf").length())
     }
