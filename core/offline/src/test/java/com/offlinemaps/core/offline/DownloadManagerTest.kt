@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okhttp3.Call
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -25,6 +27,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Exercises the real download engine against a local HTTP server, so resume, verification and the
@@ -413,6 +416,38 @@ class DownloadManagerTest {
         )
         assertTrue("the throttling must actually skip writes", progressWrites < chunks)
         assertEquals(DownloadStatus.COMPLETED, store.find("test-pkg")?.status)
+        assertEquals(body.size.toLong(), File(targetDir, "file.pbf").length())
+    }
+
+    @Test
+    fun `every transfer goes through the client it was handed, not one of its own`() = runBlocking {
+        // OPTIMIZATION.md C-04: the engine must reuse the app's client (and so its connection pool
+        // and dispatcher). An EventListener attached to the injected client only sees a call if the
+        // engine really used that instance - a per-request client would leave it at zero.
+        val body = "shared client body".toByteArray()
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(body)))
+        val callStarts = AtomicInteger(0)
+        val observed = OkHttpClient.Builder()
+            .eventListener(object : EventListener() {
+                override fun callStart(call: Call) {
+                    callStarts.incrementAndGet()
+                }
+            })
+            .build()
+        val manager = DownloadManager(
+            client = observed,
+            store = store,
+            storage = storage,
+            network = network,
+            scope = scope,
+            maxRetries = 1,
+        )
+
+        manager.start(request(sha256 = sha256(body), expectedBytes = body.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        assertEquals("exactly one request for one completed download", 1, callStarts.get())
+        assertEquals(1, server.requestCount)
         assertEquals(body.size.toLong(), File(targetDir, "file.pbf").length())
     }
 

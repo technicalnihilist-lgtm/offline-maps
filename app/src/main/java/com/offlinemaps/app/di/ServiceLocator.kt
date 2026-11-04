@@ -21,6 +21,7 @@ import com.offlinemaps.core.offline.DownloadEntry
 import com.offlinemaps.core.offline.DownloadManager
 import com.offlinemaps.core.offline.DownloadRequest
 import com.offlinemaps.core.offline.DownloadStore
+import com.offlinemaps.core.offline.SharedHttpClient
 import com.offlinemaps.core.routing.RoutingEngine
 import com.offlinemaps.core.search.SearchIndex
 import com.offlinemaps.core.search.SearchRepository
@@ -30,7 +31,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -95,14 +95,13 @@ class ServiceLocator(val appContext: Context) {
     val network by lazy { AndroidNetworkStateProvider(context) }
     val offlineRegions by lazy { OfflineRegionController(context) }
 
-    val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
-    }
+    /**
+     * The app's single HTTP client (OPTIMIZATION.md C-04). A client owns its connection pool and
+     * its dispatcher, so the size probe and the download of the same package have to go through the
+     * same instance for the second one to reuse the first one's connection; construction lives in
+     * [SharedHttpClient] so nothing in the app can build a second one by accident.
+     */
+    val httpClient: OkHttpClient get() = SharedHttpClient.client
 
     /** Root for downloaded packages. Uses app-specific external storage when available. */
     val packagesDir: File by lazy {
