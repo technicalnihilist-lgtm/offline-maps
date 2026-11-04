@@ -137,7 +137,9 @@ class DownloadManager(
         request.targetDirectory.mkdirs()
         val required = max(request.expectedBytes, 0L)
         val available = storage.availableBytes(request.targetDirectory)
-        val partial = if (partFile(request).exists()) partFile(request).length() else 0L
+        // Only the part of the partial file that a validated resume can keep counts towards the
+        // space already on disk; an unvalidated partial is about to be thrown away.
+        val partial = resumableBytes(request)
         if (!StorageGuard.canFit(available, max(required - partial, 0L))) {
             fail(
                 request,
@@ -196,13 +198,26 @@ class DownloadManager(
 
     private suspend fun downloadOnce(request: DownloadRequest) = withContext(Dispatchers.IO) {
         val part = partFile(request)
-        val meta = readMeta(request)
+        var meta = readMeta(request)
         var existing = if (part.exists()) part.length() else 0L
+
+        if (existing > 0 && ResumePolicy.decide(existing, meta, request.expectedBytes) == ResumeDecision.RESTART) {
+            // The bytes on disk cannot be validated against what was recorded for them (no
+            // validator, or a partial longer than the file it belongs to), so they are not spliced
+            // with the upstream file: drop them and fetch the package from zero.
+            part.delete()
+            metaFile(request).delete()
+            meta = ResumeMeta.EMPTY
+            existing = 0L
+        }
 
         val builder = Request.Builder().url(request.url).header("Accept-Encoding", "identity")
         if (existing > 0) {
             builder.header("Range", "bytes=$existing-")
-            meta.etag?.let { builder.header("If-Range", it) }
+            // Validate the resume instead of guessing: the server answers 200 with the whole file
+            // when the validator no longer matches, which the 200 branch below turns into a clean
+            // restart. A server that sent only Last-Modified is covered too, via the HTTP date.
+            meta.validator?.let { builder.header("If-Range", it) }
         }
 
         client.newCall(builder.build()).execute().use { response ->
@@ -269,11 +284,14 @@ class DownloadManager(
                 )
             }
 
+            // A 206 may not repeat the validator, so the stored one stands; a 200 restarted the
+            // transfer, so the bytes now on disk belong to this response only and an older
+            // validator must not be inherited.
             writeMeta(
                 request,
-                DownloadMeta(
-                    etag = response.header("ETag") ?: meta.etag,
-                    lastModified = response.header("Last-Modified") ?: meta.lastModified,
+                ResumeMeta(
+                    etag = response.header("ETag") ?: meta.etag.takeIf { append },
+                    lastModified = response.header("Last-Modified") ?: meta.lastModified.takeIf { append },
                     totalBytes = total,
                 ),
             )
@@ -424,28 +442,37 @@ class DownloadManager(
     private fun finalFile(request: DownloadRequest) = File(request.targetDirectory, request.fileName)
     private fun metaFile(request: DownloadRequest) = File(request.targetDirectory, request.fileName + ".meta")
 
-    private fun readMeta(request: DownloadRequest): DownloadMeta = runCatching {
-        val f = metaFile(request)
-        if (!f.exists()) return@runCatching DownloadMeta()
-        val parts = f.readText().split("\n")
-        DownloadMeta(
-            etag = parts.getOrNull(0)?.takeIf { it.isNotBlank() },
-            lastModified = parts.getOrNull(1)?.takeIf { it.isNotBlank() },
-            totalBytes = parts.getOrNull(2)?.toLongOrNull() ?: 0L,
-        )
-    }.getOrDefault(DownloadMeta())
+    /** Bytes of the partial file a validated resume may keep; zero when it has to be refetched. */
+    private fun resumableBytes(request: DownloadRequest): Long {
+        val part = partFile(request)
+        if (!part.exists()) return 0L
+        val length = part.length()
+        return when (ResumePolicy.decide(length, readMeta(request), request.expectedBytes)) {
+            ResumeDecision.RESUME -> length
+            ResumeDecision.RESTART -> 0L
+        }
+    }
 
-    private fun writeMeta(request: DownloadRequest, meta: DownloadMeta) {
+    private fun readMeta(request: DownloadRequest): ResumeMeta = runCatching {
+        val f = metaFile(request)
+        if (!f.exists()) return@runCatching ResumeMeta.EMPTY
+        ResumeMeta.parse(f.readText())
+    }.getOrDefault(ResumeMeta.EMPTY)
+
+    private fun writeMeta(request: DownloadRequest, meta: ResumeMeta) {
         runCatching {
-            metaFile(request).writeText("${meta.etag ?: ""}\n${meta.lastModified ?: ""}\n${meta.totalBytes}")
+            val target = metaFile(request)
+            val text = ResumeMeta.format(meta)
+            val temp = File(target.absoluteFile.parentFile, target.name + ".tmp")
+            // Rename into place so a process killed mid-write cannot leave a half-written
+            // validator behind, which the next resume would have to treat as "no validator".
+            temp.writeText(text)
+            if (!temp.renameTo(target)) {
+                target.writeText(text)
+                temp.delete()
+            }
         }
     }
 
     private fun backoffMillis(attempt: Int): Long = (500L * (1 shl (attempt - 1))).coerceAtMost(8_000L)
-
-    private data class DownloadMeta(
-        val etag: String? = null,
-        val lastModified: String? = null,
-        val totalBytes: Long = 0L,
-    )
 }
