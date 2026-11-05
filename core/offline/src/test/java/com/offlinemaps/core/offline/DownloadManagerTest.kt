@@ -306,6 +306,62 @@ class DownloadManagerTest {
     }
 
     @Test
+    fun `a part file that is already complete is installed without any network request`() = runBlocking {
+        val full = ByteArray(4096) { (it % 241).toByte() }
+        // The state a process killed between the last chunk and the rename leaves behind.
+        File(targetDir, "file.pbf.part").writeBytes(full)
+        writeMeta(etag = "\"v1\"", lastModified = null, totalBytes = full.size.toLong())
+        // No response is enqueued and the device is offline: neither may matter.
+        network.update(online = false, unmetered = false)
+        val manager = manager()
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = true)
+
+        val runtime = awaitTerminal(manager)
+
+        assertEquals(DownloadStatus.COMPLETED, runtime.status)
+        assertEquals("a complete part must not be re-downloaded", 0, server.requestCount)
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+        assertFalse("the part file is renamed away", File(targetDir, "file.pbf.part").exists())
+        assertFalse("the sidecar is consumed on success", File(targetDir, "file.pbf.meta").exists())
+        assertEquals(DownloadStatus.COMPLETED, store.find("test-pkg")?.status)
+        assertNotNull(store.find("test-pkg")?.localPath)
+    }
+
+    @Test
+    fun `a complete part file with the wrong checksum is refetched from zero`() = runBlocking {
+        val full = ByteArray(2048) { (it % 71).toByte() }
+        // Right size, wrong bytes: the length check alone would have accepted it.
+        File(targetDir, "file.pbf.part").writeBytes(ByteArray(full.size) { 7 })
+        writeMeta(etag = "\"v1\"", lastModified = null, totalBytes = full.size.toLong())
+        server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(full)))
+        val manager = manager()
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        val sent = server.takeRequest()
+        assertEquals("the unusable bytes are dropped, not resumed", null, sent.getHeader("Range"))
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+    }
+
+    @Test
+    fun `a complete part file without a published checksum still asks the server`() = runBlocking {
+        val full = ByteArray(1024) { (it % 37).toByte() }
+        File(targetDir, "file.pbf.part").writeBytes(full)
+        writeMeta(etag = "\"v1\"", lastModified = null, totalBytes = full.size.toLong())
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(416)
+                .setHeader("Content-Range", "bytes */${full.size}"),
+        )
+        val manager = manager()
+        manager.start(request(expectedBytes = full.size.toLong()), wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        assertEquals("bytes=${full.size}-", server.takeRequest().getHeader("Range"))
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(full))
+    }
+
+    @Test
     fun `refuses to download on a metered connection when wifi only is set`() = runBlocking {
         network.update(online = true, unmetered = false)
         val manager = manager()

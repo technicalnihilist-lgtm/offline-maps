@@ -155,6 +155,12 @@ class DownloadManager(
     }
 
     private suspend fun execute(request: DownloadRequest, wifiOnly: Boolean) {
+        // A package whose bytes are already all on disk needs no transfer: the process can die
+        // between the last chunk and the rename, and resuming that download used to cost a request
+        // and, on a server that answers the range from zero, the whole package over again. The
+        // bytes are verified against the published checksum here and installed in place.
+        if (finishCompletedPart(request)) return
+
         val net = network.status.value
         if (!net.online) {
             fail(request, DownloadFailureKind.NETWORK, "You are offline. Connect to a network to download.")
@@ -390,6 +396,45 @@ class DownloadManager(
             return
         }
 
+        installPart(request, part)
+    }
+
+    /**
+     * Installs a package whose `.part` file is already complete, without touching the network.
+     *
+     * Returns true when the package was verified and installed, false when the caller should carry
+     * on with the ordinary transfer (nothing on disk, an unknown expected size, no published
+     * checksum to trust the bytes against, or a checksum mismatch - in which case the unusable
+     * bytes are dropped so the normal path refetches them from zero instead of failing).
+     */
+    private suspend fun finishCompletedPart(request: DownloadRequest): Boolean {
+        // Without a published checksum there is nothing to verify the leftover bytes against, so
+        // the ordinary resume path (which asks the server) is the only safe route.
+        if (request.sha256.isNullOrBlank() && request.md5.isNullOrBlank()) return false
+        val part = partFile(request)
+        if (!part.exists()) return false
+        val expected = when {
+            request.expectedBytes > 0L -> request.expectedBytes
+            else -> readMeta(request).totalBytes
+        }
+        if (expected <= 0L || part.length() != expected) return false
+
+        setState(request.packageKey, DownloadStatus.VERIFYING, bytes = part.length())
+        store.update(request.packageKey, DownloadStatus.VERIFYING, part.length(), null)
+        val problem = withContext(Dispatchers.IO) { FileVerifier.verify(part, request.sha256, request.md5) }
+        if (problem != null) {
+            withContext(Dispatchers.IO) {
+                part.delete()
+                metaFile(request).delete()
+            }
+            return false
+        }
+        installPart(request, part)
+        return true
+    }
+
+    /** Renames a verified `.part` file into place and records the package as completed. */
+    private suspend fun installPart(request: DownloadRequest, part: File) {
         val finalFile = finalFile(request)
         withContext(Dispatchers.IO) {
             if (finalFile.exists()) finalFile.delete()
