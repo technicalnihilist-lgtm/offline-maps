@@ -57,7 +57,7 @@ class ZipExtractorTest {
         // 4 MiB of incompressible data, unpacked with a 1 KiB buffer: a whole-entry allocation
         // would need the full 4 MiB, this needs 1 KiB.
         val payload = ByteArray(4 * 1024 * 1024).also { Random(7).nextBytes(it) }
-        val zip = zipOf("graph/big", payload)
+        val zip = zipOf("graph/big" to payload)
         val destination = File(temp.root, "out")
 
         ZipExtractor.extract(zip, destination, bufferSize = 1024)
