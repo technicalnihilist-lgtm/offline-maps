@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.core.common.MapPackageType
+import com.offlinemaps.core.offline.ZipExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -78,7 +79,9 @@ class PackageInstaller(
         graphDir.deleteRecursively()
         graphDir.mkdirs()
         try {
-            unzip(file, graphDir)
+            // Streamed through one reused 64 KiB buffer: a graph package is hundreds of files and
+            // hundreds of megabytes, and nothing here may be sized from the archive.
+            ZipExtractor.extract(file, graphDir)
         } catch (e: Throwable) {
             Log.e(TAG, "routing package unzip failed", e)
             return InstallResult.Failure("The routing package is not a valid graph archive.")
@@ -91,27 +94,6 @@ class PackageInstaller(
             },
             onFailure = { InstallResult.Failure(it.message ?: "The routing graph could not be loaded.") },
         )
-    }
-
-    /** Extracts a zip, refusing entries that would escape the destination directory. */
-    private fun unzip(zip: File, destination: File) {
-        java.util.zip.ZipFile(zip).use { archive ->
-            archive.entries().asSequence().forEach { entry ->
-                val target = File(destination, entry.name)
-                val root = destination.canonicalPath + File.separator
-                if (!target.canonicalPath.startsWith(root)) {
-                    throw SecurityException("Unsafe path in routing package: ${entry.name}")
-                }
-                if (entry.isDirectory) {
-                    target.mkdirs()
-                } else {
-                    target.parentFile?.mkdirs()
-                    archive.getInputStream(entry).use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    }
-                }
-            }
-        }
     }
 
     private suspend fun installPlaces(
