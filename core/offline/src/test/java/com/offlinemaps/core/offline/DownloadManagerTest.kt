@@ -338,6 +338,50 @@ class DownloadManagerTest {
     }
 
     @Test
+    fun `re-checks free space before resuming a retry`() = runBlocking {
+        // OPTIMIZATION.md C-05: the free-space check at start must not be the only one. A device
+        // that filled up while the transfer was failing has to be told so before the resume starts,
+        // rather than failing later on a raw write error.
+        val full = ByteArray(4096) { (it % 251).toByte() }
+        val alreadyHave = 1024
+        File(targetDir, "file.pbf.part").writeBytes(full.copyOfRange(0, alreadyHave))
+        writeMeta(etag = "\"v1\"", lastModified = null, totalBytes = full.size.toLong())
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .setHeader("Content-Range", "bytes $alreadyHave-${full.size - 1}/${full.size}")
+                .setBody(okio.Buffer().write(full.copyOfRange(alreadyHave, full.size))),
+        )
+        // Plenty of space for the first check, almost nothing afterwards.
+        val probes = AtomicInteger(0)
+        val shrinking = object : StorageProbe {
+            override fun availableBytes(directory: File): Long =
+                if (probes.incrementAndGet() == 1) 10L * 1024 * 1024 * 1024 else 1024L
+        }
+        val manager = DownloadManager(
+            client = OkHttpClient(),
+            store = store,
+            storage = shrinking,
+            network = network,
+            scope = scope,
+            maxRetries = 2,
+        )
+
+        manager.start(request(sha256 = sha256(full), expectedBytes = full.size.toLong()), wifiOnly = false)
+        val runtime = awaitTerminal(manager)
+
+        assertEquals(DownloadStatus.FAILED, runtime.status)
+        assertTrue(
+            "expected a storage message, saw ${runtime.error}",
+            runtime.error?.contains("free space") == true,
+        )
+        assertEquals("the resume must not be attempted once the space is gone", 1, server.requestCount)
+        assertTrue("the partial file is kept for a later resume", File(targetDir, "file.pbf.part").exists())
+        assertEquals(DownloadStatus.FAILED, store.find("test-pkg")?.status)
+    }
+
+    @Test
     fun `reports a clear error for a missing package`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(404))
         val manager = manager()

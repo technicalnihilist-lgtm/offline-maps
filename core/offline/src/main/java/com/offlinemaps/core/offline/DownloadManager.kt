@@ -137,17 +137,8 @@ class DownloadManager(
         }
 
         request.targetDirectory.mkdirs()
-        val required = max(request.expectedBytes, 0L)
-        val available = storage.availableBytes(request.targetDirectory)
-        // Only the part of the partial file that a validated resume can keep counts towards the
-        // space already on disk; an unvalidated partial is about to be thrown away.
-        val partial = resumableBytes(request)
-        if (!StorageGuard.canFit(available, max(required - partial, 0L))) {
-            fail(
-                request,
-                DownloadFailureKind.STORAGE,
-                StorageGuard.reasonFor(available, max(required - partial, 0L)) ?: "Not enough free storage.",
-            )
+        spaceShortfall(request)?.let { reason ->
+            fail(request, DownloadFailureKind.STORAGE, reason)
             return
         }
 
@@ -170,6 +161,17 @@ class DownloadManager(
 
         var attempt = 0
         while (true) {
+            if (attempt > 0) {
+                // A retry is a resume, and the disk that was big enough when the transfer started
+                // may not be big enough now: the previous attempt wrote more bytes into the .part
+                // file, and the device may have filled up in the meantime. Checking only once at
+                // the start let a resume run until a write failed with a raw IOException; the
+                // shortfall is known here, so it is reported as the storage failure it is.
+                spaceShortfall(request)?.let { reason ->
+                    fail(request, DownloadFailureKind.STORAGE, reason)
+                    return
+                }
+            }
             try {
                 downloadOnce(request)
                 verifyAndFinish(request)
@@ -437,6 +439,23 @@ class DownloadManager(
                 progress = it[key]?.progress?.copy(bytesDownloaded = bytes),
                 error = error,
             ))
+        }
+    }
+
+    /**
+     * The user-readable reason the transfer cannot proceed for lack of space, or null when it can.
+     *
+     * Only the part of the partial file that a validated resume can keep counts towards the space
+     * already on disk; an unvalidated partial is about to be thrown away and must be paid for again.
+     */
+    private fun spaceShortfall(request: DownloadRequest): String? {
+        val required = max(request.expectedBytes, 0L)
+        val available = storage.availableBytes(request.targetDirectory)
+        val needed = max(required - resumableBytes(request), 0L)
+        return if (StorageGuard.canFit(available, needed)) {
+            null
+        } else {
+            StorageGuard.reasonFor(available, needed) ?: "Not enough free storage."
         }
     }
 
