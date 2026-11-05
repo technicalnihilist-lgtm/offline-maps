@@ -151,7 +151,7 @@ class DownloadManager(
                 url = request.url,
                 status = DownloadStatus.RUNNING,
                 bytesTotal = request.expectedBytes,
-                bytesDownloaded = partial,
+                bytesDownloaded = resumableBytes(request),
                 localPath = null,
                 sha256 = request.sha256,
                 md5 = request.md5,
