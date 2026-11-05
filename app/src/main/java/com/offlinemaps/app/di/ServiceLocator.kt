@@ -21,6 +21,7 @@ import com.offlinemaps.core.offline.DownloadEntry
 import com.offlinemaps.core.offline.DownloadManager
 import com.offlinemaps.core.offline.DownloadRequest
 import com.offlinemaps.core.offline.DownloadStore
+import com.offlinemaps.core.offline.PartialFileSweeper
 import com.offlinemaps.core.offline.SharedHttpClient
 import com.offlinemaps.core.routing.RoutingEngine
 import com.offlinemaps.core.search.SearchIndex
@@ -104,9 +105,12 @@ class ServiceLocator(val appContext: Context) {
     val httpClient: OkHttpClient get() = SharedHttpClient.client
 
     /** Root for downloaded packages. Uses app-specific external storage when available. */
-    val packagesDir: File by lazy {
+    val packagesDir: File by lazy { packagesRoot().apply { mkdirs() } }
+
+    /** The packages root as a path only - reading it must not create anything. */
+    private fun packagesRoot(): File {
         val base = context.getExternalFilesDir(null) ?: context.filesDir
-        File(base, "packages").apply { mkdirs() }
+        return File(base, "packages")
     }
 
     val routingEngine: RoutingEngine by lazy { RoutingEngine(File(packagesDir, "routing/current")) }
@@ -134,9 +138,13 @@ class ServiceLocator(val appContext: Context) {
         expectedBytes = record.bytesTotal,
         sha256 = record.sha256,
         md5 = record.md5,
-        fileName = "${record.packageKey}.${extensionFor(record.type)}",
+        fileName = fileNameFor(record),
         targetDirectory = packagesDir,
     )
+
+    /** The on-disk name of a package, and so the base name of its `.part` / `.meta` siblings. */
+    private fun fileNameFor(record: DownloadRecord): String =
+        "${record.packageKey}.${extensionFor(record.type)}"
 
     private fun extensionFor(type: MapPackageType): String = when (type) {
         MapPackageType.ROUTING_OSM -> "osm.pbf"
@@ -158,11 +166,39 @@ class ServiceLocator(val appContext: Context) {
     fun restorePendingDownloads() {
         if (!restoreRequested.compareAndSet(false, true)) return
         applicationScope.launch {
+            sweepOrphanPartials()
             val resumable = downloadRecords.pending().filter { it.status != DownloadStatus.PAUSED }
             if (resumable.isEmpty()) return@launch
             val wifiOnly = settings.current().wifiOnlyDownloads
             resumable.forEach { record -> downloadManager.start(downloadRequestFor(record), wifiOnly) }
         }
+    }
+
+    /**
+     * Removes `<name>.part` / `<name>.meta` files that no download record claims (OPTIMIZATION.md
+     * C-06). A cancel deletes its partial itself once the transfer has stopped; this covers the
+     * case where the process died between the two, which would otherwise leave the bytes on disk
+     * with nothing left to resume them. Runs off the main thread, after the first frame, and asks
+     * the download table only about files it actually found - normally none.
+     */
+    private suspend fun sweepOrphanPartials() {
+        // Resolved without [packagesDir] so a device that has never downloaded anything does not
+        // have the directory created for it just to look inside it.
+        val directory = packagesRoot()
+        if (!directory.isDirectory) return
+        PartialFileSweeper.sweep(directory) { baseName ->
+            val key = packageKeyForFileName(baseName)
+            // A name that is not one of ours is left alone rather than deleted on a guess.
+            key == null || downloadRecords.find(key) != null
+        }
+    }
+
+    /** The package key a package file name was built from, or null when it is not one of ours. */
+    private fun packageKeyForFileName(fileName: String): String? {
+        val extension = MapPackageType.entries
+            .map { extensionFor(it) }
+            .firstOrNull { fileName.endsWith(".$it") } ?: return null
+        return fileName.removeSuffix(".$extension")
     }
 
     fun onLowMemory() {

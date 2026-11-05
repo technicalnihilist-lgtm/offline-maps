@@ -19,7 +19,9 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -423,6 +425,50 @@ class DownloadManagerTest {
         manager.cancel("test-pkg")
         delay(400)
         assertEquals(null, store.find("test-pkg"))
+    }
+
+    @Test
+    fun `cancelling deletes the partial file as well as the record`() = runBlocking {
+        // OPTIMIZATION.md C-06: the bytes of a cancelled download must not survive on disk.
+        val body = ByteArray(64 * 1024) { 5 }
+        server.enqueue(
+            MockResponse()
+                .setBody(okio.Buffer().write(body))
+                .throttleBody(2048, 50, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        val manager = manager()
+        manager.start(request(), wifiOnly = false)
+        delay(300)
+        assertTrue("the transfer should have started", File(targetDir, "file.pbf.part").exists())
+
+        manager.cancel("test-pkg")
+
+        withTimeout(15_000) {
+            while (store.find("test-pkg") != null) delay(25)
+        }
+        assertFalse("the partial file must be gone", File(targetDir, "file.pbf.part").exists())
+        assertFalse("the sidecar must be gone", File(targetDir, "file.pbf.meta").exists())
+        assertFalse("nothing may be installed", File(targetDir, "file.pbf").exists())
+        assertNull(manager.states.value["test-pkg"])
+    }
+
+    @Test
+    fun `cancelling a failed download still removes the partial it left behind`() = runBlocking {
+        // A failed transfer keeps its partial so a retry can resume it; cancelling is the user
+        // saying they do not want it, so the bytes have to go even though no job is running.
+        val body = ByteArray(1024) { 9 }
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(body)))
+        val manager = manager()
+        manager.start(request(expectedBytes = 4096), wifiOnly = false)
+        assertEquals(DownloadStatus.FAILED, awaitTerminal(manager).status)
+        assertTrue("the failed download should have left a partial", File(targetDir, "file.pbf.part").exists())
+
+        manager.cancel("test-pkg")
+
+        withTimeout(15_000) {
+            while (store.find("test-pkg") != null) delay(25)
+        }
+        assertFalse("the partial file must be gone", File(targetDir, "file.pbf.part").exists())
     }
 
     @Test

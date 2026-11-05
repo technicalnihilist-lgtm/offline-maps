@@ -55,6 +55,14 @@ class DownloadManager(
     /** Packages the user has paused; blocks late progress writes from reviving the RUNNING state. */
     private val pausedKeys = ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * The request each package key was last started with. Cancellation has to name the files to
+     * delete (`<name>.part`, `<name>.meta`) and only the request knows them, so the engine keeps the
+     * last one per key. One small object per package the user started - and dropped as soon as the
+     * package is installed or forgotten - so it cannot grow with the catalogue.
+     */
+    private val requests = ConcurrentHashMap<String, DownloadRequest>()
+
     private val _states = MutableStateFlow<Map<String, DownloadRuntime>>(emptyMap())
     val states: StateFlow<Map<String, DownloadRuntime>> = _states.asStateFlow()
 
@@ -67,6 +75,7 @@ class DownloadManager(
     fun start(request: DownloadRequest, wifiOnly: Boolean) {
         if (jobs[request.packageKey]?.isActive == true) return
         pausedKeys.remove(request.packageKey)
+        requests[request.packageKey] = request
         setState(request.packageKey, DownloadStatus.QUEUED)
         val job = scope.launch(Dispatchers.IO) {
             runCatching { execute(request, wifiOnly) }
@@ -91,11 +100,30 @@ class DownloadManager(
         }
     }
 
+    /**
+     * Cancels a download and removes every trace of it, on disk as well as in the store.
+     *
+     * The partial file and its sidecar are deleted only after the transfer job has finished, never
+     * before: `cancel()` returns while the job's write loop can still be inside a chunk, and a
+     * delete racing that write lets the engine recreate the `.part` file it is still holding open.
+     * Joining the job first makes the cleanup deterministic instead of best-effort.
+     *
+     * A request the engine no longer remembers (the download finished or failed in an earlier
+     * process) is left to [PartialFileSweeper], which removes the same files at the next start.
+     */
     fun cancel(key: String) {
         pausedKeys.add(key)
         val job = jobs.remove(key)
+        val request = requests.remove(key)
         job?.cancel()
         scope.launch {
+            job?.join()
+            if (request != null) {
+                withContext(Dispatchers.IO) {
+                    partFile(request).delete()
+                    metaFile(request).delete()
+                }
+            }
             store.delete(key)
             _states.update { it - key }
         }
@@ -105,6 +133,7 @@ class DownloadManager(
     suspend fun deletePackage(request: DownloadRequest) {
         pausedKeys.add(request.packageKey)
         jobs.remove(request.packageKey)?.cancel()
+        requests.remove(request.packageKey)
         withContext(Dispatchers.IO) {
             finalFile(request).delete()
             partFile(request).delete()
@@ -388,6 +417,9 @@ class DownloadManager(
                 errorMessage = null,
             ),
         )
+        // Nothing partial is left behind once the package is installed, so the request is no
+        // longer needed to clean up after a cancel.
+        requests.remove(request.packageKey)
         _states.update {
             it + (request.packageKey to DownloadRuntime(
                 packageKey = request.packageKey,
