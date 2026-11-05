@@ -453,22 +453,30 @@ class DownloadManagerTest {
     }
 
     @Test
-    fun `cancelling a failed download still removes the partial it left behind`() = runBlocking {
-        // A failed transfer keeps its partial so a retry can resume it; cancelling is the user
-        // saying they do not want it, so the bytes have to go even though no job is running.
-        val body = ByteArray(1024) { 9 }
-        server.enqueue(MockResponse().setBody(okio.Buffer().write(body)))
+    fun `cancelling a paused download removes the partial the pause kept`() = runBlocking {
+        // A pause deliberately keeps the bytes and stops the job, so a cancel afterwards has no
+        // running transfer to wait for: it still has to delete what the pause left on disk.
+        val body = ByteArray(64 * 1024) { 9 }
+        server.enqueue(
+            MockResponse()
+                .setBody(okio.Buffer().write(body))
+                .throttleBody(2048, 50, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
         val manager = manager()
-        manager.start(request(expectedBytes = 4096), wifiOnly = false)
-        assertEquals(DownloadStatus.FAILED, awaitTerminal(manager).status)
-        assertTrue("the failed download should have left a partial", File(targetDir, "file.pbf.part").exists())
+        manager.start(request(), wifiOnly = false)
+        delay(300)
+        manager.pause("test-pkg")
+        delay(400)
+        val part = File(targetDir, "file.pbf.part")
+        assertTrue("a pause must keep the partial", part.exists())
 
         manager.cancel("test-pkg")
 
         withTimeout(15_000) {
             while (store.find("test-pkg") != null) delay(25)
         }
-        assertFalse("the partial file must be gone", File(targetDir, "file.pbf.part").exists())
+        assertFalse("the partial file must be gone", part.exists())
+        assertFalse("the sidecar must be gone", File(targetDir, "file.pbf.meta").exists())
     }
 
     @Test
