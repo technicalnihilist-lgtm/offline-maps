@@ -13,6 +13,13 @@ import com.offlinemaps.core.common.TileMath
  */
 object TileRegionEstimator {
 
+    /**
+     * No offline region a phone can actually hold costs more than this; a figure above it means the
+     * input was bad (a whole-world bounding box at street zoom), not that the download is that big.
+     * The estimate is clamped here rather than allowed to grow into a meaningless number.
+     */
+    const val MAX_ESTIMATE_BYTES: Long = 10L * 1024 * 1024 * 1024 * 1024 // 10 TiB
+
     private val VECTOR_TILE_BYTES = mapOf(
         0..5 to 3_500L,
         6..8 to 6_000L,
@@ -28,14 +35,33 @@ object TileRegionEstimator {
     fun averageVectorTileBytes(zoom: Int): Long =
         VECTOR_TILE_BYTES.entries.firstOrNull { zoom in it.key }?.value ?: 20_000L
 
+    /**
+     * The zoom range the estimate actually covers.
+     *
+     * A zoom outside the slippy-map range, or an inverted range (`minZoom > maxZoom`), makes
+     * [TileMath] iterate over nothing or over meaningless levels, which used to yield an estimate of
+     * zero bytes for a region that is perfectly valid. Both are clamped into `0..[TileMath.MAX_ZOOM]`
+     * here, and an inverted range collapses onto its upper bound - the conservative direction for a
+     * storage check.
+     */
+    fun normalizeZoomRange(minZoom: Int, maxZoom: Int): IntRange {
+        val high = maxZoom.coerceIn(0, TileMath.MAX_ZOOM)
+        val low = minZoom.coerceIn(0, high)
+        return low..high
+    }
+
     fun estimateBytes(bounds: GeoBounds, minZoom: Int, maxZoom: Int, includeTerrain: Boolean = true): Long {
         var total = 0L
-        for (z in minZoom..maxZoom) {
-            val tiles = TileMath.tileCount(bounds, z, z)
-            total += tiles * averageVectorTileBytes(z)
-            if (includeTerrain && z >= 5) total += tiles * DEM_TILE_BYTES
+        for (z in normalizeZoomRange(minZoom, maxZoom)) {
+            // A valid bounds always covers at least one tile; the floor keeps a degenerate or
+            // clamped range from reporting a region as free.
+            val tiles = TileMath.tileCount(bounds, z, z).coerceAtLeast(1L)
+            val perTile = averageVectorTileBytes(z) + if (includeTerrain && z >= 5) DEM_TILE_BYTES else 0L
+            total += tiles * perTile
+            // Stop before the running total can get anywhere near overflowing a Long.
+            if (total >= MAX_ESTIMATE_BYTES) return MAX_ESTIMATE_BYTES
         }
-        return total
+        return total.coerceIn(1L, MAX_ESTIMATE_BYTES)
     }
 
     /** Human explanation of what a zoom range means, so coverage is never oversold. */
