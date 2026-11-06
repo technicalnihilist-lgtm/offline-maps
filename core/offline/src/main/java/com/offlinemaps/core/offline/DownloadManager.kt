@@ -52,6 +52,28 @@ class DownloadManager(
 ) {
     private val jobs = ConcurrentHashMap<String, Job>()
 
+    /**
+     * The newest job that may still be touching one package's files: a transfer, or the cleanup a
+     * cancel runs after it.
+     *
+     * A replacement transfer joins its predecessor before it opens the `.part` file, so a job that
+     * was cancelled but is still inside a chunk write - or a cancel that has not deleted the file
+     * yet - cannot write to, or delete, the file the new transfer is working on. Entries are dropped
+     * when their job completes, so the map only ever holds one small object per package the user
+     * started in this process.
+     */
+    private val predecessors = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Serialises the per-key bookkeeping above.
+     *
+     * "Is this package already running?" has to be atomic with the launch that answers it. Two
+     * callers - a double tap, or a resume racing the restart after a process restore - could
+     * otherwise both see no job, both launch a transfer, and two write loops would then append to
+     * the same `.part` file from two different Range offsets, which corrupts the package.
+     */
+    private val startLock = Any()
+
     /** Packages the user has paused; blocks late progress writes from reviving the RUNNING state. */
     private val pausedKeys = ConcurrentHashMap.newKeySet<String>()
 
@@ -73,28 +95,45 @@ class DownloadManager(
      * A second call for the same package while it is running is a no-op.
      */
     fun start(request: DownloadRequest, wifiOnly: Boolean) {
-        if (jobs[request.packageKey]?.isActive == true) return
-        pausedKeys.remove(request.packageKey)
-        requests[request.packageKey] = request
-        setState(request.packageKey, DownloadStatus.QUEUED)
-        val job = scope.launch(Dispatchers.IO) {
-            runCatching { execute(request, wifiOnly) }
+        val key = request.packageKey
+        val job = synchronized(startLock) {
+            if (jobs[key]?.isActive == true) return
+            val previous = predecessors[key]
+            pausedKeys.remove(key)
+            requests[key] = request
+            setState(key, DownloadStatus.QUEUED)
+            val launched = scope.launch(Dispatchers.IO) {
+                // A cancelled predecessor is no longer active but may still be inside a write, and
+                // a cancel cleanup may still have the files to delete. Either way it owns them
+                // until it is done, so the transfer waits instead of opening them alongside it.
+                previous?.join()
+                runCatching { execute(request, wifiOnly) }
+            }
+            jobs[key] = launched
+            predecessors[key] = launched
+            launched
         }
-        jobs[request.packageKey] = job
-        job.invokeOnCompletion { cause ->
-            jobs.remove(request.packageKey)
-            // Pause/cancel already persisted the right status; nothing to do here.
-            if (cause is CancellationException) Unit
+        job.invokeOnCompletion {
+            // Only this job's own entry may be dropped: a newer start for the same key has already
+            // replaced both maps, and evicting its entry would let a third start run beside it.
+            synchronized(startLock) {
+                jobs.remove(key, job)
+                predecessors.remove(key, job)
+            }
+            // Pause/cancel already persisted the right status; nothing else to do here.
         }
     }
 
     fun pause(key: String) {
         pausedKeys.add(key)
-        val job = jobs.remove(key) ?: return
+        val job = synchronized(startLock) { jobs.remove(key) } ?: return
         job.cancel()
         scope.launch {
             val current = _states.value[key]?.progress?.bytesDownloaded
                 ?: store.find(key)?.bytesDownloaded ?: 0L
+            // A start that arrived while the cancelled transfer was winding down owns the key now:
+            // writing PAUSED here would replace the state and the stored row of the new transfer.
+            if (!synchronized(startLock) { jobs[key] == null }) return@launch
             store.update(key, DownloadStatus.PAUSED, current, null)
             setState(key, DownloadStatus.PAUSED, bytes = current)
         }
@@ -113,19 +152,35 @@ class DownloadManager(
      */
     fun cancel(key: String) {
         pausedKeys.add(key)
-        val job = jobs.remove(key)
-        val request = requests.remove(key)
-        job?.cancel()
-        scope.launch {
-            job?.join()
-            if (request != null) {
-                withContext(Dispatchers.IO) {
-                    partFile(request).delete()
-                    metaFile(request).delete()
+        val cleanup = synchronized(startLock) {
+            val job = jobs.remove(key)
+            val request = requests.remove(key)
+            job?.cancel()
+            // The cleanup joins the transfer it cancelled and is registered as the key's newest
+            // file owner in the same step, so a start that lands while the delete is still to come
+            // waits for it rather than downloading into a file that is about to be removed.
+            val previous = predecessors[key]
+            val launched = scope.launch {
+                job?.join()
+                previous?.join()
+                if (request != null) {
+                    withContext(Dispatchers.IO) {
+                        partFile(request).delete()
+                        metaFile(request).delete()
+                    }
+                }
+                store.delete(key)
+                // A start that arrived during the cleanup has already published its own state;
+                // removing the key here would wipe it.
+                synchronized(startLock) {
+                    if (jobs[key] == null) _states.update { it - key }
                 }
             }
-            store.delete(key)
-            _states.update { it - key }
+            predecessors[key] = launched
+            launched
+        }
+        cleanup.invokeOnCompletion {
+            synchronized(startLock) { predecessors.remove(key, cleanup) }
         }
     }
 

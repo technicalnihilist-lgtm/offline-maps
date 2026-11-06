@@ -37,6 +37,10 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class DownloadManagerTest {
 
+    private companion object {
+        const val THREADS = 8
+    }
+
     @get:Rule
     val temp = TemporaryFolder()
 
@@ -603,6 +607,82 @@ class DownloadManagerTest {
         assertEquals("exactly one request for one completed download", 1, callStarts.get())
         assertEquals(1, server.requestCount)
         assertEquals(body.size.toLong(), File(targetDir, "file.pbf").length())
+    }
+
+    @Test
+    fun `concurrent starts for the same package run a single transfer`() = runBlocking {
+        // OPTIMIZATION.md C-10: two callers asking for the same package at the same moment used to
+        // both find no running job and both launch a transfer, so two write loops appended to the
+        // same .part file from two different offsets and the package came out corrupt.
+        val body = ByteArray(256 * 1024) { (it % 251).toByte() }
+        server.enqueue(
+            MockResponse()
+                .setBody(okio.Buffer().write(body))
+                .throttleBody(16 * 1024, 20, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        val callStarts = AtomicInteger(0)
+        val observed = OkHttpClient.Builder()
+            .eventListener(object : EventListener() {
+                override fun callStart(call: Call) {
+                    callStarts.incrementAndGet()
+                }
+            })
+            .build()
+        val manager = DownloadManager(
+            client = observed,
+            store = store,
+            storage = storage,
+            network = network,
+            scope = scope,
+            maxRetries = 1,
+        )
+        val request = request(sha256 = sha256(body), expectedBytes = body.size.toLong())
+
+        val ready = java.util.concurrent.CountDownLatch(THREADS)
+        val go = java.util.concurrent.CountDownLatch(1)
+        val callers = (1..THREADS).map {
+            Thread {
+                ready.countDown()
+                go.await()
+                manager.start(request, wifiOnly = false)
+            }.apply { start() }
+        }
+        ready.await()
+        go.countDown()
+        callers.forEach { it.join(15_000) }
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        assertEquals("one package must mean one transfer", 1, callStarts.get())
+        assertEquals(1, server.requestCount)
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(body))
+    }
+
+    @Test
+    fun `a restart right after a pause does not overlap the cancelled transfer`() = runBlocking {
+        // The pause cancels the job but cannot wait for it, and the resumed transfer used to open
+        // the same .part file while the cancelled one was still inside a chunk write.
+        val body = ByteArray(256 * 1024) { (it % 241).toByte() }
+        server.enqueue(
+            MockResponse()
+                .setBody(okio.Buffer().write(body))
+                .throttleBody(16 * 1024, 20, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        // The resume may carry a Range header; a 200 restarts the transfer from zero.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(body)))
+        val manager = manager()
+        val request = request(sha256 = sha256(body), expectedBytes = body.size.toLong())
+
+        manager.start(request, wifiOnly = false)
+        withTimeout(15_000) {
+            while (!File(targetDir, "file.pbf.part").exists()) delay(10)
+        }
+        delay(50)
+        manager.pause("test-pkg")
+        manager.start(request, wifiOnly = false)
+
+        assertEquals(DownloadStatus.COMPLETED, awaitTerminal(manager).status)
+        assertTrue(File(targetDir, "file.pbf").readBytes().contentEquals(body))
+        assertEquals(DownloadStatus.COMPLETED, store.find("test-pkg")?.status)
     }
 
     @Test
