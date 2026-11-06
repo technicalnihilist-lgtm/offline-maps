@@ -1,6 +1,7 @@
 package com.offlinemaps.core.search
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.SearchSource
@@ -259,6 +260,71 @@ class SearchIndexTest {
         assertNotNull("the first search after the warm-up must be timed", repository.firstSearchMillis)
         assertTrue("the timings must reach the logger, saw $lines", lines.size >= 2)
     }
+
+    /**
+     * OPTIMIZATION.md D-01: search only ever runs `term*` queries, so the FTS table keeps prefix
+     * indexes for 2- and 3-character prefixes instead of scanning a term's whole doclist.
+     */
+    @Test
+    fun `fts table is created with prefix indexes`() {
+        index.count()
+        val sql = ftsTableSql()
+        assertTrue("expected a prefix index on places_fts, saw: $sql", sql.contains("prefix=\"2,3\""))
+    }
+
+    /**
+     * The prefix indexes are a storage change, so an index written by version 1 must be rebuilt in
+     * place: the places it holds survive, nothing is re-downloaded and search still answers.
+     */
+    @Test
+    fun `upgrading a version 1 index keeps its places and adds the prefix index`() {
+        writeVersion1Database()
+
+        assertEquals(1, index.count())
+        assertEquals("Ordino", index.search("Ord").first().name)
+        assertTrue(index.search("Ord").isNotEmpty())
+        assertTrue(
+            "the upgrade must rebuild places_fts with the prefix index, saw: ${ftsTableSql()}",
+            ftsTableSql().contains("prefix=\"2,3\""),
+        )
+    }
+
+    /** Writes the version 1 schema straight to disk, as an install that predates D-01 would have it. */
+    private fun writeVersion1Database() {
+        val file = context.getDatabasePath("offline_search.db")
+        file.parentFile?.mkdirs()
+        file.delete()
+        val v1 = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            v1.execSQL(
+                """
+                CREATE TABLE places (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    lat REAL NOT NULL,
+                    lon REAL NOT NULL,
+                    admin TEXT,
+                    street TEXT,
+                    region_id TEXT NOT NULL,
+                    weight INTEGER NOT NULL DEFAULT 50
+                )
+                """.trimIndent(),
+            )
+            v1.execSQL("CREATE VIRTUAL TABLE places_fts USING fts4(name, admin, street, tokenize=unicode61)")
+            v1.execSQL(
+                "INSERT INTO places VALUES ('n1', 'Ordino', 'town', 42.5562, 1.5335, NULL, NULL, 'andorra', 20)",
+            )
+            v1.execSQL("INSERT INTO places_fts(rowid, name, admin, street) VALUES (1, 'Ordino', '', '')")
+            v1.version = 1
+        } finally {
+            v1.close()
+        }
+    }
+
+    private fun ftsTableSql(): String =
+        index.readableDatabase.rawQuery("SELECT sql FROM sqlite_master WHERE name = 'places_fts'", null)
+            .use { if (it.moveToFirst()) it.getString(0) ?: "" else "" }
 
     /** Counts dispatches and runs them inline, so the test needs no second thread. */
     private class CountingDispatcher : CoroutineDispatcher() {

@@ -21,33 +21,35 @@ import java.io.File
 class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, VERSION) {
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE places (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                lat REAL NOT NULL,
-                lon REAL NOT NULL,
-                admin TEXT,
-                street TEXT,
-                region_id TEXT NOT NULL,
-                weight INTEGER NOT NULL DEFAULT 50
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            "CREATE VIRTUAL TABLE places_fts USING fts4(name, admin, street, tokenize=unicode61)",
-        )
+        db.execSQL(CREATE_PLACES)
+        db.execSQL(CREATE_PLACES_FTS)
         db.execSQL("CREATE INDEX idx_places_latlon ON places(lat, lon)")
         db.execSQL("CREATE INDEX idx_places_region ON places(region_id)")
     }
 
+    /**
+     * v2 only changes how `places_fts` is stored, so an upgrade rebuilds that table from `places`
+     * and leaves the rows alone: the two hold the same text, and a user must never lose an
+     * imported region - or have to re-download it - because the index layout changed.
+     */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2 && tableExists(db, "places")) {
+            db.execSQL("DROP TABLE IF EXISTS places_fts")
+            db.execSQL(CREATE_PLACES_FTS)
+            db.execSQL(
+                "INSERT INTO places_fts(rowid, name, admin, street) " +
+                    "SELECT rowid, name, IFNULL(admin, ''), IFNULL(street, '') FROM places",
+            )
+            return
+        }
         db.execSQL("DROP TABLE IF EXISTS places")
         db.execSQL("DROP TABLE IF EXISTS places_fts")
         onCreate(db)
     }
+
+    private fun tableExists(db: SQLiteDatabase, table: String): Boolean =
+        db.rawQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(table))
+            .use { it.moveToFirst() }
 
     /** Bulk insert, replacing any previous rows for the same region. Runs in one transaction. */
     fun importPack(regionId: String, records: Sequence<PlaceRecord>, onProgress: (Int) -> Unit = {}) {
@@ -217,7 +219,33 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
 
     companion object {
         private const val DATABASE_NAME = "offline_search.db"
-        private const val VERSION = 1
+        private const val VERSION = 2
+
+        private val CREATE_PLACES = """
+            CREATE TABLE places (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                admin TEXT,
+                street TEXT,
+                region_id TEXT NOT NULL,
+                weight INTEGER NOT NULL DEFAULT 50
+            )
+        """.trimIndent()
+
+        /**
+         * `prefix="2,3"` keeps prefix indexes for 2- and 3-character prefixes (OPTIMIZATION.md
+         * D-01). Search always queries `term*`, so without them every prefix query enumerates the
+         * whole doclist of the term before the join and sort can start. Measured on a 60k-place
+         * index, the prefix indexes cut that enumeration by roughly a third for one-character
+         * queries and turn a no-match multi-term query into a single cheap lookup; the results,
+         * their order and the row count are identical, and the index file grows by about 20%.
+         */
+        private const val CREATE_PLACES_FTS =
+            "CREATE VIRTUAL TABLE places_fts USING fts4(" +
+                "name, admin, street, tokenize=unicode61, prefix=\"2,3\")"
 
         fun toFtsTerms(query: String): String {
             // Strip everything that is not a letter, digit or space. That removes FTS operators
