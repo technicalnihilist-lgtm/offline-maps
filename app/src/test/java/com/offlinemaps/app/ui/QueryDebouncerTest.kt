@@ -2,7 +2,6 @@ package com.offlinemaps.app.ui
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
@@ -12,6 +11,12 @@ import org.junit.Test
  * superseded search cannot land afterwards, and that clearing the field drops the pending work.
  */
 class QueryDebouncerTest {
+
+    /**
+     * Virtual time to step past, comfortably longer than the window. `advanceUntilIdle` is not used:
+     * it leaves the background scope alone, so the debounced job would never get to run.
+     */
+    private val SETTLE_MILLIS = 1_000L
 
     @Test
     fun `a burst of keystrokes runs only the last query`() = runTest {
@@ -27,7 +32,7 @@ class QueryDebouncerTest {
         assertThat(seen).isEmpty()
         assertThat(debouncer.dispatched).isEqualTo(0)
 
-        advanceUntilIdle()
+        advanceTimeBy(SETTLE_MILLIS)
 
         assertThat(seen).containsExactly("bengal")
         assertThat(debouncer.dispatched).isEqualTo(1)
@@ -62,7 +67,7 @@ class QueryDebouncerTest {
         }
         advanceTimeBy(130) // the first search is now running
         debouncer.submit("bengaluruu") { query -> applied += query }
-        advanceUntilIdle()
+        advanceTimeBy(SETTLE_MILLIS)
 
         assertThat(applied).containsExactly("bengaluruu")
     }
@@ -74,7 +79,7 @@ class QueryDebouncerTest {
 
         debouncer.submit("goa") { seen += it }
         debouncer.cancel()
-        advanceUntilIdle()
+        advanceTimeBy(SETTLE_MILLIS)
 
         assertThat(seen).isEmpty()
         assertThat(debouncer.dispatched).isEqualTo(0)
