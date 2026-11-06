@@ -93,6 +93,11 @@ data class MapUiState(
  */
 class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
 
+    private companion object {
+        /** Below this the search box shows nothing anyway, so it must not reach the database. */
+        const val SEARCH_MIN_QUERY_LENGTH = 2
+    }
+
     private val _state = MutableStateFlow(MapUiState(mapConfig = locator.mapConfig))
     val state: StateFlow<MapUiState> = _state.asStateFlow()
 
@@ -100,6 +105,9 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
 
     private var lastFix: LocationFix? = null
     private var locationJob: Job? = null
+
+    /** Collapses a burst of keystrokes into one SQLite query (OPTIMIZATION.md D-02). */
+    private val searchDebouncer = QueryDebouncer(viewModelScope)
 
     init {
         viewModelScope.launch {
@@ -201,21 +209,25 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
 
     fun setSearchQuery(query: String) {
         _state.update { it.copy(searchQuery = query) }
-        if (query.trim().length < 2) {
-            _state.update { it.copy(searchResults = emptyList(), searchNote = null) }
+        if (query.trim().length < SEARCH_MIN_QUERY_LENGTH) {
+            searchDebouncer.cancel()
+            _state.update { it.copy(searchResults = emptyList(), searchNote = null, searching = false) }
             return
         }
-        viewModelScope.launch {
-            _state.update { it.copy(searching = true) }
-            val results = locator.search.search(query)
+        // The indicator still comes on with the keystroke; only the query itself waits for the
+        // typing to pause, so a fast typist costs one query instead of one per character.
+        _state.update { it.copy(searching = true) }
+        searchDebouncer.submit(query) { pending ->
+            val results = locator.search.search(pending)
             _state.update {
                 it.copy(searchResults = results, searchNote = locator.search.lastCoverageNote, searching = false)
             }
         }
     }
 
-    fun clearSearch() = _state.update {
-        it.copy(searchQuery = "", searchResults = emptyList(), searchNote = null)
+    fun clearSearch() {
+        searchDebouncer.cancel()
+        _state.update { it.copy(searchQuery = "", searchResults = emptyList(), searchNote = null, searching = false) }
     }
 
     fun selectDestination(place: PlaceResult) {
