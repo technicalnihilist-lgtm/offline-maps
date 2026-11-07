@@ -176,33 +176,38 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         }
     }
 
-    /** Places inside a bounding box, ordered by distance from [center] - used for "nearby". */
+    /**
+     * Places inside a bounding box, ordered by distance from [center] - used for "nearby".
+     *
+     * The bounding box is filtered in SQL, so a small radius never reads the region's places that
+     * lie outside it. The exact radius test cannot be expressed without trigonometry, so it runs in
+     * Kotlin - but on a bounded set: the select returns at most [rowCapFor] rows, and it orders by
+     * distance, so what the cap drops is the far end of the box rather than an arbitrary slice of
+     * the table (OPTIMIZATION.md D-05). Rows the radius rejects are dropped as they are read, so no
+     * [PlaceResult] is built for a place that will not be returned.
+     */
     fun nearby(center: GeoPoint, radiusMeters: Double, limit: Int = 40): List<PlaceResult> {
         val bounds = GeoBounds.of(listOf(center))!!.expandedBy(radiusMeters)
-        val rows = readableDatabase.rawQuery(
-            NEARBY_BBOX_SQL,
-            arrayOf(bounds.south.toString(), bounds.north.toString(), bounds.west.toString(), bounds.east.toString()),
-        ).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) {
-                    add(
-                        PlaceResult(
-                            id = cursor.getString(0),
-                            name = cursor.getString(1),
-                            type = cursor.getString(2),
-                            point = GeoPoint(cursor.getDouble(3), cursor.getDouble(4)),
-                            address = cursor.getString(6),
-                            source = SearchSource.OFFLINE_INDEX,
-                        ),
-                    )
-                }
+        val rowCap = rowCapFor(limit)
+        val found = ArrayList<Pair<Double, PlaceResult>>(minOf(rowCap, 64))
+        readableDatabase.rawQuery(NEARBY_BBOX_SQL, nearbyArgs(center, bounds, rowCap)).use { cursor ->
+            while (cursor.moveToNext()) {
+                val point = GeoPoint(cursor.getDouble(3), cursor.getDouble(4))
+                val distance = GeoMath.distanceMeters(center, point)
+                if (distance > radiusMeters) continue
+                found.add(
+                    distance to PlaceResult(
+                        id = cursor.getString(0),
+                        name = cursor.getString(1),
+                        type = cursor.getString(2),
+                        point = point,
+                        address = cursor.getString(6),
+                        source = SearchSource.OFFLINE_INDEX,
+                    ),
+                )
             }
         }
-        return rows.map { it to GeoMath.distanceMeters(center, it.point) }
-            .filter { it.second <= radiusMeters }
-            .sortedBy { it.second }
-            .take(limit)
-            .map { it.first }
+        return found.sortedBy { it.first }.take(limit).map { it.second }
     }
 
     fun deleteRegion(regionId: String) {
@@ -231,13 +236,54 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         private const val DATABASE_NAME = "offline_search.db"
         private const val VERSION = 2
 
-        /** `nearby`'s bounding-box select; kept here so a test can EXPLAIN the real query (D-04). */
+        /**
+         * `nearby`'s bounding-box select; kept here so a test can EXPLAIN the real query (D-04).
+         *
+         * The `BETWEEN` clauses are the box filter and run in SQLite. The `ORDER BY` is an
+         * approximate distance - degrees of latitude, plus degrees of longitude scaled by cos(lat)
+         * so it is comparable away from the equator - which makes the `LIMIT` keep the near end of
+         * the box instead of an arbitrary slice of it. The exact radius test still runs in Kotlin;
+         * it needs trigonometry SQLite may not provide (OPTIMIZATION.md D-05).
+         */
         internal val NEARBY_BBOX_SQL = """
             SELECT id, name, type, lat, lon, admin, street
             FROM places
             WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-            LIMIT 400
+            ORDER BY (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?) * ?
+            LIMIT ?
         """.trimIndent()
+
+        /** Ceiling on the rows one `nearby` call may read, whatever limit the caller asks for. */
+        internal const val NEARBY_MAX_ROWS = 400
+
+        /** Rows read per requested result, so the radius test has spares to reject. */
+        private const val NEARBY_OVERFETCH = 4
+
+        /**
+         * Rows [nearby] lets the bounding-box select return for a request of [limit] results. It is
+         * derived from the limit rather than fixed, so a caller asking for 5 places does not pay for
+         * 400, and it is bounded by [NEARBY_MAX_ROWS], so no caller can ask for an unbounded read.
+         */
+        internal fun rowCapFor(limit: Int): Int =
+            (limit.coerceAtLeast(1) * NEARBY_OVERFETCH).coerceAtMost(NEARBY_MAX_ROWS)
+
+        /** The bound parameters of [NEARBY_BBOX_SQL], in order, for [bounds] around [center]. */
+        internal fun nearbyArgs(center: GeoPoint, bounds: GeoBounds, rowCap: Int): Array<String> {
+            val cosLat = kotlin.math.cos(Math.toRadians(center.latitude))
+            val lonScaleSq = (cosLat * cosLat).coerceAtLeast(1e-12)
+            return arrayOf(
+                bounds.south.toString(),
+                bounds.north.toString(),
+                bounds.west.toString(),
+                bounds.east.toString(),
+                center.latitude.toString(),
+                center.latitude.toString(),
+                center.longitude.toString(),
+                center.longitude.toString(),
+                lonScaleSq.toString(),
+                rowCap.toString(),
+            )
+        }
 
         private const val CREATE_INDEX_LATLON =
             "CREATE INDEX IF NOT EXISTS idx_places_latlon ON places(lat, lon)"

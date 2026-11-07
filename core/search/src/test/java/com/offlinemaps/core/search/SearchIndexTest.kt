@@ -3,6 +3,7 @@ package com.offlinemaps.core.search
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
+import com.offlinemaps.core.common.GeoBounds
 import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.SearchSource
 import org.junit.After
@@ -298,7 +299,7 @@ class SearchIndexTest {
     @Test
     fun `nearby bounding box select is answered from the lat lon index`() {
         importGrid(4_000)
-        val plan = queryPlan(SearchIndex.NEARBY_BBOX_SQL, "42.40", "42.60", "1.40", "1.60")
+        val plan = nearbyPlan()
         assertTrue("expected the bbox select to read idx_places_latlon, saw: $plan", plan.contains("idx_places_latlon"))
         assertFalse("the bbox select must not walk the whole table, saw: $plan", plan.contains("SCAN places"))
     }
@@ -331,8 +332,113 @@ class SearchIndexTest {
         val names = indexNames()
         assertTrue("expected idx_places_latlon after the upgrade, saw: $names", "idx_places_latlon" in names)
         assertTrue("expected idx_places_region after the upgrade, saw: $names", "idx_places_region" in names)
-        val plan = queryPlan(SearchIndex.NEARBY_BBOX_SQL, "42.40", "42.60", "1.40", "1.60")
+        val plan = nearbyPlan()
         assertTrue("expected the upgraded index to answer nearby from idx_places_latlon, saw: $plan", plan.contains("idx_places_latlon"))
+    }
+
+    /**
+     * OPTIMIZATION.md D-05: the bounding box is filtered in SQL, so a place outside the box is
+     * never read - it is not fetched and then dropped in Kotlin.
+     */
+    @Test
+    fun `nearby bounding box filter is applied in sql`() {
+        index.importPack(
+            "andorra",
+            writePack(
+                listOf(
+                    PlaceRecord("in", "Inside the box", "town", 42.5069, 1.5212),
+                    // ~0.5 degrees north: outside a 1.5 km box, so SQL must exclude it.
+                    PlaceRecord("out", "Outside the box", "town", 42.5562, 1.5212),
+                ),
+            ),
+        )
+        val bounds = GeoBounds.of(listOf(GeoPoint(42.5069, 1.5212)))!!.expandedBy(1_500.0)
+        val names = readableNames(bounds, rowCap = SearchIndex.rowCapFor(40))
+        assertEquals("the box filter must run in SQL, saw: $names", listOf("Inside the box"), names)
+    }
+
+    /**
+     * OPTIMIZATION.md D-05: the exact radius test is the only filter left in Kotlin. A place inside
+     * the box but past the radius - a box corner - is dropped, and a place inside the radius is not.
+     */
+    @Test
+    fun `nearby drops the box corners that are past the radius`() {
+        index.importPack(
+            "andorra",
+            writePack(
+                listOf(
+                    PlaceRecord("near", "Just north", "town", 42.5150, 1.5212),
+                    // Inside the 1.5 km box but ~1.6 km away diagonally: only the radius rejects it.
+                    PlaceRecord("corner", "Box corner", "town", 42.5180, 1.5340),
+                ),
+            ),
+        )
+        val found = index.nearby(GeoPoint(42.5069, 1.5212), radiusMeters = 1_500.0)
+        assertEquals(listOf("Just north"), found.map { it.name })
+    }
+
+    /** OPTIMIZATION.md D-05: the row cap follows the requested limit and never exceeds its ceiling. */
+    @Test
+    fun `nearby row cap follows the limit and is bounded`() {
+        assertEquals(20, SearchIndex.rowCapFor(5))
+        assertEquals(160, SearchIndex.rowCapFor(40))
+        assertEquals(SearchIndex.NEARBY_MAX_ROWS, SearchIndex.rowCapFor(10_000))
+        assertTrue("a zero or negative limit still reads one row at most", SearchIndex.rowCapFor(0) <= 4)
+    }
+
+    /** OPTIMIZATION.md D-05: the select itself returns no more rows than the cap it is given. */
+    @Test
+    fun `nearby bounding box select respects the row cap`() {
+        importGrid(4_000)
+        val bounds = GeoBounds(42.40, 1.40, 42.60, 1.60)
+        val names = readableNames(bounds, rowCap = 20)
+        assertEquals("the select must stop at the cap it was given, saw ${names.size} rows", 20, names.size)
+    }
+
+    /**
+     * OPTIMIZATION.md D-05: the cap must not cost correctness. With more rows in the box than the
+     * cap allows, `nearby` still returns the nearest ones - the select orders by distance, so the
+     * rows the cap drops are the farthest.
+     */
+    @Test
+    fun `nearby keeps the nearest places when the box holds more rows than the cap`() {
+        val center = GeoPoint(42.5069, 1.5212)
+        // 60 places marching north from the centre, ~20 m apart: all inside the radius, and the
+        // box holds far more of them than the cap for a limit of 5 (4 * 5 = 20 rows).
+        index.importPack(
+            "andorra",
+            (1..60).asSequence().map { step ->
+                PlaceRecord(
+                    id = "step$step",
+                    name = "Step $step",
+                    type = "poi",
+                    lat = center.latitude + step * 0.00018,
+                    lon = center.longitude,
+                )
+            },
+        )
+        val found = index.nearby(center, radiusMeters = 2_000.0, limit = 5)
+        assertEquals(5, found.size)
+        assertEquals(listOf("Step 1", "Step 2", "Step 3", "Step 4", "Step 5"), found.map { it.name })
+    }
+
+    /** Names the bounding-box select returns for [bounds], bound exactly as `nearby` binds it. */
+    private fun readableNames(bounds: GeoBounds, rowCap: Int): List<String> {
+        val center = bounds.center
+        return index.readableDatabase
+            .rawQuery(SearchIndex.NEARBY_BBOX_SQL, SearchIndex.nearbyArgs(center, bounds, rowCap))
+            .use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.getString(1)) }
+            }
+    }
+
+    /** EXPLAINs the bounding-box select with the arguments `nearby` really binds (D-05). */
+    private fun nearbyPlan(): String {
+        val bounds = GeoBounds(42.40, 1.40, 42.60, 1.60)
+        return queryPlan(
+            SearchIndex.NEARBY_BBOX_SQL,
+            *SearchIndex.nearbyArgs(bounds.center, bounds, SearchIndex.rowCapFor(40)),
+        )
     }
 
     /** Fills the index with [count] places spread over a one-degree grid around Andorra. */
