@@ -65,6 +65,18 @@ class SearchRepository(
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
 
+        // A query made only of punctuation - "!!!", "...", "@#$" - has no letters or digits, so
+        // it produces no FTS terms and cannot match a single row. The answer is therefore known
+        // before any work is done, and it is given here instead of opening the index: on a cold
+        // process the coverage count below would open the SQLite file for a query that can never
+        // return anything (OPTIMIZATION.md D-06). The note is the one a no-match query already
+        // publishes, so the screen says exactly what it said before.
+        if (SearchIndex.toFtsTerms(trimmed).isEmpty()) {
+            currentCoroutineContext().ensureActive()
+            lastCoverageNote = NOTHING_MATCHED
+            return@withContext emptyList()
+        }
+
         val startedAt = clock()
         val coordinate = parseCoordinate(trimmed)
         val results = runCatching { index.search(trimmed, limit) }.getOrDefault(emptyList())
@@ -75,10 +87,8 @@ class SearchRepository(
         // (OPTIMIZATION.md D-03).
         currentCoroutineContext().ensureActive()
         val note = when {
-            sizeBlocking() == 0 ->
-                "No offline search data is installed yet. Download a region's places pack to search without internet."
-            results.isEmpty() ->
-                "Nothing matched in your downloaded map data. Try another spelling, or download a nearby region."
+            sizeBlocking() == 0 -> NO_DATA_NOTE
+            results.isEmpty() -> NOTHING_MATCHED
             else -> null
         }
         currentCoroutineContext().ensureActive()
@@ -106,6 +116,12 @@ class SearchRepository(
     suspend fun clear() = withContext(io) { index.clearAll() }
 
     companion object {
+        internal const val NO_DATA_NOTE =
+            "No offline search data is installed yet. Download a region's places pack to search without internet."
+
+        internal const val NOTHING_MATCHED =
+            "Nothing matched in your downloaded map data. Try another spelling, or download a nearby region."
+
         private val COORDINATE = Regex(
             "^\\s*(-?\\d{1,3}(?:\\.\\d+)?)\\s*[,; ]\\s*(-?\\d{1,3}(?:\\.\\d+)?)\\s*$",
         )
