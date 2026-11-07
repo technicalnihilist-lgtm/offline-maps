@@ -318,9 +318,18 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
                 "name, admin, street, tokenize=unicode61, prefix=\"2,3\")"
 
         fun toFtsTerms(query: String): String {
-            // Strip everything that is not a letter, digit or space. That removes FTS operators
-            // (AND/OR/NOT/NEAR), quotes and punctuation, so a stray character can never turn the
-            // user's text into an FTS syntax error or an injection.
+            // Strip everything that is not a letter, digit or space, then build one prefix term per
+            // word. The result is always either empty or one to six space separated `<letters and
+            // digits>*` terms, which is a valid FTS4 MATCH expression for any input (D-07):
+            //
+            // * every character that carries FTS meaning - `"` for a phrase, `*` for a prefix,
+            //   `-` for NOT, `:` for a column filter, `(`/`)` for grouping, `^`, `\` - is
+            //   replaced with a space, so none of them can reach the parser;
+            // * the operator words (AND, OR, NOT, NEAR) are letters and survive, but Android's
+            //   bundled SQLite has no enhanced query syntax, so they are searched as words rather
+            //   than acting as operators - "a NEAR b" is three terms, not an error;
+            // * no term is ever empty, and the count is capped, so nothing can be left dangling
+            //   next to a space.
             val cleaned = query.replace(Regex("[^\\p{L}\\p{N}\\s]"), " ").trim()
             if (cleaned.isEmpty()) return ""
             // FTS4 prefix queries must be written as `term*` - a quoted `"term"*` only matches a
