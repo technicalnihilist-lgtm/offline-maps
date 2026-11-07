@@ -7,6 +7,7 @@ import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.SearchSource
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -288,6 +289,85 @@ class SearchIndexTest {
             ftsTableSql().contains("prefix=\"2,3\""),
         )
     }
+
+    /**
+     * OPTIMIZATION.md D-04: `nearby` bounds its scan by latitude, so the bounding-box select has to
+     * read `idx_places_latlon`. A plan that says `SCAN places` is the regression this pins - the
+     * query stays correct either way, it just stops being a lookup.
+     */
+    @Test
+    fun `nearby bounding box select is answered from the lat lon index`() {
+        importGrid(4_000)
+        val plan = queryPlan(SearchIndex.NEARBY_BBOX_SQL, "42.40", "42.60", "1.40", "1.60")
+        assertTrue("expected the bbox select to read idx_places_latlon, saw: $plan", plan.contains("idx_places_latlon"))
+        assertFalse("the bbox select must not walk the whole table, saw: $plan", plan.contains("SCAN places"))
+    }
+
+    /**
+     * OPTIMIZATION.md D-04: counting and deleting a region both filter on `region_id`, so both are
+     * answered from `idx_places_region` rather than from a table scan.
+     */
+    @Test
+    fun `region lookups are answered from the region index`() {
+        importGrid(4_000)
+        val countPlan = queryPlan("SELECT COUNT(*) FROM places WHERE region_id = ?", "andorra")
+        val deletePlan = queryPlan("DELETE FROM places WHERE region_id = ?", "andorra")
+        assertTrue("expected the region count to read idx_places_region, saw: $countPlan", countPlan.contains("idx_places_region"))
+        assertTrue("expected the region delete to read idx_places_region, saw: $deletePlan", deletePlan.contains("idx_places_region"))
+        assertFalse("the region count must not walk the whole table, saw: $countPlan", countPlan.contains("SCAN places"))
+        assertFalse("the region delete must not walk the whole table, saw: $deletePlan", deletePlan.contains("SCAN places"))
+    }
+
+    /**
+     * OPTIMIZATION.md D-04: an index file that reached an upgrade without the lookup indexes - the
+     * version 1 fixture below is exactly that - must come out of the upgrade with both of them, and
+     * with its places intact.
+     */
+    @Test
+    fun `upgrading a version 1 index without lookup indexes adds both`() {
+        writeVersion1Database()
+
+        assertEquals(1, index.count())
+        val names = indexNames()
+        assertTrue("expected idx_places_latlon after the upgrade, saw: $names", "idx_places_latlon" in names)
+        assertTrue("expected idx_places_region after the upgrade, saw: $names", "idx_places_region" in names)
+        val plan = queryPlan(SearchIndex.NEARBY_BBOX_SQL, "42.40", "42.60", "1.40", "1.60")
+        assertTrue("expected the upgraded index to answer nearby from idx_places_latlon, saw: $plan", plan.contains("idx_places_latlon"))
+    }
+
+    /** Fills the index with [count] places spread over a one-degree grid around Andorra. */
+    private fun importGrid(count: Int) {
+        index.importPack(
+            "andorra",
+            (0 until count).asSequence().map { i ->
+                PlaceRecord(
+                    id = "g$i",
+                    name = "Grid place $i",
+                    type = "poi",
+                    lat = 42.40 + (i % 100) / 100.0,
+                    lon = 1.40 + (i / 100 % 100) / 100.0,
+                )
+            },
+        )
+    }
+
+    private fun queryPlan(sql: String, vararg args: String): String =
+        index.readableDatabase.rawQuery("EXPLAIN QUERY PLAN $sql", args).use { cursor ->
+            // The plan row's columns differ across SQLite versions, so keep all of them.
+            buildList {
+                while (cursor.moveToNext()) {
+                    add((0 until cursor.columnCount).joinToString(" ") { cursor.getString(it) ?: "" })
+                }
+            }.joinToString(" | ")
+        }
+
+    private fun indexNames(): Set<String> =
+        index.readableDatabase.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'places'",
+            null,
+        ).use { cursor ->
+            buildSet { while (cursor.moveToNext()) cursor.getString(0)?.let { add(it) } }
+        }
 
     /** Writes the version 1 schema straight to disk, as an install that predates D-01 would have it. */
     private fun writeVersion1Database() {

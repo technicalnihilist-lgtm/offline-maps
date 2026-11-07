@@ -23,28 +23,44 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(CREATE_PLACES)
         db.execSQL(CREATE_PLACES_FTS)
-        db.execSQL("CREATE INDEX idx_places_latlon ON places(lat, lon)")
-        db.execSQL("CREATE INDEX idx_places_region ON places(region_id)")
+        createLookupIndexes(db)
     }
 
     /**
      * v2 only changes how `places_fts` is stored, so an upgrade rebuilds that table from `places`
      * and leaves the rows alone: the two hold the same text, and a user must never lose an
      * imported region - or have to re-download it - because the index layout changed.
+     *
+     * Every upgrade path that keeps the rows ends in [createLookupIndexes], so a database can never
+     * come out of an upgrade without the two lookup indexes the map screen queries through
+     * (OPTIMIZATION.md D-04). The statements are `IF NOT EXISTS`, so on an install that already has
+     * them this is a no-op catalog lookup and nothing is rewritten or re-downloaded.
      */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2 && tableExists(db, "places")) {
+        if (!tableExists(db, "places")) {
+            db.execSQL("DROP TABLE IF EXISTS places_fts")
+            onCreate(db)
+            return
+        }
+        if (oldVersion < 2) {
             db.execSQL("DROP TABLE IF EXISTS places_fts")
             db.execSQL(CREATE_PLACES_FTS)
             db.execSQL(
                 "INSERT INTO places_fts(rowid, name, admin, street) " +
                     "SELECT rowid, name, IFNULL(admin, ''), IFNULL(street, '') FROM places",
             )
-            return
         }
-        db.execSQL("DROP TABLE IF EXISTS places")
-        db.execSQL("DROP TABLE IF EXISTS places_fts")
-        onCreate(db)
+        createLookupIndexes(db)
+    }
+
+    /**
+     * The two indexes the interactive queries run on. `nearby` bounds its scan by `lat` and filters
+     * `lon`, so it reads `idx_places_latlon` instead of walking the table; deleting or counting a
+     * region reads `idx_places_region` (OPTIMIZATION.md D-04).
+     */
+    private fun createLookupIndexes(db: SQLiteDatabase) {
+        db.execSQL(CREATE_INDEX_LATLON)
+        db.execSQL(CREATE_INDEX_REGION)
     }
 
     private fun tableExists(db: SQLiteDatabase, table: String): Boolean =
@@ -163,14 +179,8 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
     /** Places inside a bounding box, ordered by distance from [center] - used for "nearby". */
     fun nearby(center: GeoPoint, radiusMeters: Double, limit: Int = 40): List<PlaceResult> {
         val bounds = GeoBounds.of(listOf(center))!!.expandedBy(radiusMeters)
-        val sql = """
-            SELECT id, name, type, lat, lon, admin, street
-            FROM places
-            WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-            LIMIT 400
-        """.trimIndent()
         val rows = readableDatabase.rawQuery(
-            sql,
+            NEARBY_BBOX_SQL,
             arrayOf(bounds.south.toString(), bounds.north.toString(), bounds.west.toString(), bounds.east.toString()),
         ).use { cursor ->
             buildList {
@@ -220,6 +230,20 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
     companion object {
         private const val DATABASE_NAME = "offline_search.db"
         private const val VERSION = 2
+
+        /** `nearby`'s bounding-box select; kept here so a test can EXPLAIN the real query (D-04). */
+        internal val NEARBY_BBOX_SQL = """
+            SELECT id, name, type, lat, lon, admin, street
+            FROM places
+            WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+            LIMIT 400
+        """.trimIndent()
+
+        private const val CREATE_INDEX_LATLON =
+            "CREATE INDEX IF NOT EXISTS idx_places_latlon ON places(lat, lon)"
+
+        private const val CREATE_INDEX_REGION =
+            "CREATE INDEX IF NOT EXISTS idx_places_region ON places(region_id)"
 
         private val CREATE_PLACES = """
             CREATE TABLE places (
