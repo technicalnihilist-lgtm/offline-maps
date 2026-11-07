@@ -7,6 +7,8 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /**
@@ -66,13 +68,21 @@ class SearchRepository(
         val startedAt = clock()
         val coordinate = parseCoordinate(trimmed)
         val results = runCatching { index.search(trimmed, limit) }.getOrDefault(emptyList())
-        lastCoverageNote = when {
+        // The query itself is a blocking SQLite call, so a search superseded while it ran cannot be
+        // interrupted inside it - it stops at the edge of that call instead, before it publishes
+        // anything. Both the coverage note and the first-search timing are process-wide, so a
+        // cancelled search that wrote them would describe the newest query with an older answer
+        // (OPTIMIZATION.md D-03).
+        currentCoroutineContext().ensureActive()
+        val note = when {
             sizeBlocking() == 0 ->
                 "No offline search data is installed yet. Download a region's places pack to search without internet."
             results.isEmpty() ->
                 "Nothing matched in your downloaded map data. Try another spelling, or download a nearby region."
             else -> null
         }
+        currentCoroutineContext().ensureActive()
+        lastCoverageNote = note
         // Timed after the coverage count too, so the number is what the user actually waited for
         // (OPTIMIZATION.md A-06). Only the first search of the process is kept.
         prewarm.recordSearch(clock() - startedAt)

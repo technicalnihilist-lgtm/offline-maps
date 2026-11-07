@@ -25,6 +25,8 @@ import com.offlinemaps.core.map.MapConfig
 import com.offlinemaps.core.map.StyleOptions
 import com.offlinemaps.core.routing.RouteResult
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -219,6 +221,11 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
         _state.update { it.copy(searching = true) }
         searchDebouncer.submit(query) { pending ->
             val results = locator.search.search(pending)
+            // Cancelling the previous search stops it at its next suspension point, but the index
+            // query is a blocking call: a search superseded while it was inside that call resumes
+            // here with its answer already in hand. Re-check before publishing, so the screen only
+            // ever shows the answer to the query the user is still on (OPTIMIZATION.md D-03).
+            currentCoroutineContext().ensureActive()
             _state.update {
                 it.copy(searchResults = results, searchNote = locator.search.lastCoverageNote, searching = false)
             }
