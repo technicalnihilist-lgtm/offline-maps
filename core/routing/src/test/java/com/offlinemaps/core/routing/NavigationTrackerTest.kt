@@ -89,6 +89,77 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `a fix with no accuracy is not treated as a precise one`() {
+        // 60 m north of the route: inside the threshold a 5 m fix earns, outside nothing else.
+        val wobble = GeoPoint(42.50054, 1.5050)
+        val precise = NavigationTracker(plan())
+        repeat(3) { precise.onLocation(LocationFix(wobble, accuracyMeters = 5f)) }
+        assertTrue("a precise fix 60 m off the line is a deviation", precise.onLocation(LocationFix(wobble, accuracyMeters = 5f)).offRoute)
+
+        val unknown = NavigationTracker(plan())
+        repeat(5) {
+            assertFalse(
+                "a fix that reports no accuracy must not be trusted as a tight one",
+                unknown.onLocation(LocationFix(wobble)).offRoute,
+            )
+        }
+    }
+
+    @Test
+    fun `a fix with no accuracy still reports a deviation when clearly off the route`() {
+        val farAway = GeoPoint(42.5045, 1.5050) // ~500 m off the line
+        val tracker = NavigationTracker(plan())
+        tracker.onLocation(LocationFix(farAway))
+        tracker.onLocation(LocationFix(farAway))
+        assertTrue(
+            "an unknown-accuracy fix far from the route must still be able to trigger a recalculation",
+            tracker.onLocation(LocationFix(farAway)).offRoute,
+        )
+    }
+
+    @Test
+    fun `a fix with no accuracy is not called a weak signal`() {
+        // The weak-signal notice reports what the receiver said; a receiver that said nothing is a
+        // different thing from one that reported a poor estimate, so this stays false.
+        val state = NavigationTracker(plan()).onLocation(LocationFix(a))
+        assertFalse(state.gpsSignalWeak)
+    }
+
+    @Test
+    fun `heading falls back to the route when the fix has no bearing`() {
+        val state = NavigationTracker(plan()).onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f))
+        assertEquals("the first leg runs due east", 90.0, state.headingDegrees, 2.0)
+    }
+
+    @Test
+    fun `a reported bearing is used as the heading`() {
+        val state = NavigationTracker(plan())
+            .onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f, bearingDegrees = 200f))
+        assertEquals(200.0, state.headingDegrees, 0.001)
+    }
+
+    @Test
+    fun `a fix with no bearing is not given due north on a one-point plan`() {
+        val origin = GeoPoint(42.5000, 1.5000)
+        val destination = GeoPoint(42.6000, 1.6000) // north-east, so due north would be wrong
+        val degenerate = RoutePlan(
+            profile = TravelProfile.CAR,
+            geometry = listOf(origin),
+            distanceMeters = GeoMath.distanceMeters(origin, destination),
+            durationSeconds = 600,
+            maneuvers = emptyList(),
+            origin = origin,
+            destination = destination,
+            cumulativeMeters = doubleArrayOf(0.0),
+        )
+        val state = NavigationTracker(degenerate).onLocation(LocationFix(origin))
+        assertTrue(
+            "expected the bearing towards the destination, got ${state.headingDegrees}",
+            state.headingDegrees in 30.0..60.0,
+        )
+    }
+
+    @Test
     fun `arrival is detected within the radius`() {
         val state = NavigationTracker(plan()).onLocation(LocationFix(c, accuracyMeters = 4f))
         assertTrue(state.arrived)

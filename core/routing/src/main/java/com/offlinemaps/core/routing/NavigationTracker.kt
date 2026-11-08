@@ -25,7 +25,7 @@ data class NavigationState(
 )
 
 data class NavigationConfig(
-    /** Base off-route threshold; the effective value grows with reported GPS accuracy. */
+    /** Base off-route threshold; the effective value grows with the accuracy used for the fix. */
     val offRouteThresholdMeters: Double = 45.0,
     /** Consecutive off-route fixes required before we declare a deviation and recalculate. */
     val offRouteFixesToTrigger: Int = 3,
@@ -33,6 +33,18 @@ data class NavigationConfig(
     val arrivalRadiusMeters: Double = 25.0,
     /** Accuracy worse than this is treated as a weak fix and is not used to trigger rerouting. */
     val weakAccuracyMeters: Float = 60f,
+    /**
+     * Accuracy assumed for a fix that carries none.
+     *
+     * `Location.hasAccuracy()` is false when the provider never set an estimate, and
+     * such a fix used to fall back to `0f` - the tightest off-route threshold there is, so a fix
+     * with no estimate at all was trusted more than any real one. A missing estimate is not evidence
+     * of precision, so the geometry uses this coarse stand-in instead: a fix of unknown accuracy has
+     * to be clearly off the route before it counts as a deviation. It is not called weak, though -
+     * the weak-signal notice reports what the receiver said, and a receiver that said nothing is a
+     * different thing from one that said "poor".
+     */
+    val unknownAccuracyMeters: Float = 60f,
 )
 
 /**
@@ -80,7 +92,7 @@ class NavigationTracker(
                 snappedPoint = fix.point,
                 currentStreetName = null,
                 gpsSignalWeak = isWeak(fix),
-                headingDegrees = fix.bearingDegrees?.toDouble() ?: 0.0,
+                headingDegrees = headingFor(fix),
             )
         }
 
@@ -132,7 +144,7 @@ class NavigationTracker(
             ?: remaining
 
         val weak = isWeak(fix)
-        val threshold = max(config.offRouteThresholdMeters, (fix.accuracyMeters ?: 0f) * 2.0)
+        val threshold = max(config.offRouteThresholdMeters, accuracyForDecision(fix) * 2.0)
         val isOff = bestDistance > threshold
         if (isOff && !weak) offRouteCount++ else if (!isOff) offRouteCount = 0
         val offRoute = offRouteCount >= config.offRouteFixesToTrigger
@@ -173,10 +185,29 @@ class NavigationTracker(
         )
     }
 
+    /**
+     * Heading for a plan too short to have a direction. A fix that reported no bearing used to
+     * become due north (0°), which is a real direction the receiver never claimed; fall back to the
+     * bearing towards the destination instead, and only to 0° when there is no direction at all.
+     */
+    private fun headingFor(fix: LocationFix): Double =
+        fix.bearingDegrees?.toDouble()
+            ?: GeoMath.bearingDegrees(fix.point, plan.destination)
+                .takeIf { GeoMath.distanceMeters(fix.point, plan.destination) > 1.0 }
+            ?: 0.0
+
     private fun searchIndex(): RouteSegmentIndex =
         segmentIndex ?: RouteSegmentIndex(plan.geometry).also { segmentIndex = it }
 
-    private fun isWeak(fix: LocationFix): Boolean = (fix.accuracyMeters ?: 0f) > config.weakAccuracyMeters
+    private fun isWeak(fix: LocationFix): Boolean =
+        fix.accuracyMeters?.let { it > config.weakAccuracyMeters } ?: false
+
+    /**
+     * Accuracy to use for the off-route test. A missing estimate is replaced by a coarse stand-in
+     * rather than by zero, so the fix is never treated as the most precise one we could get.
+     */
+    private fun accuracyForDecision(fix: LocationFix): Float =
+        fix.accuracyMeters ?: config.unknownAccuracyMeters
 
     /** Projects [p] onto the segment for the "camera follows the route" mode. */
     private fun nearestPointOnSegment(p: GeoPoint, a: GeoPoint, b: GeoPoint): GeoPoint {
