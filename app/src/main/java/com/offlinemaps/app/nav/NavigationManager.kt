@@ -12,6 +12,7 @@ import com.offlinemaps.core.routing.GuidanceAnnouncer
 import com.offlinemaps.core.routing.InstructionMapper
 import com.offlinemaps.core.routing.NavigationState
 import com.offlinemaps.core.routing.NavigationTracker
+import com.offlinemaps.core.routing.RerouteGate
 import com.offlinemaps.core.routing.RoutePlan
 import com.offlinemaps.core.routing.RouteResult
 import kotlinx.coroutines.CoroutineScope
@@ -72,8 +73,12 @@ class NavigationManager(private val locator: ServiceLocator) {
     private var tracker: NavigationTracker? = null
     private var announcer: GuidanceAnnouncer? = null
     private var speech: SpeechGuidance? = null
-    private var lastRerouteAt = 0L
-    private var rerouteAttempts = 0
+    /**
+     * Decides when a deviation may be answered with a recalculation: a cooldown, a minimum distance
+     * travelled since the last attempt (so a stationary off-route fix does not loop), and an attempt
+     * budget. OPTIMIZATION.md E-04.
+     */
+    private val rerouteGate = RerouteGate()
 
     val speechGuidance: SpeechGuidance? get() = speech
 
@@ -174,18 +179,16 @@ class NavigationManager(private val locator: ServiceLocator) {
 
     private fun maybeReroute(fix: LocationFix) {
         val now = System.currentTimeMillis()
-        if (now - lastRerouteAt < REROUTE_COOLDOWN_MS) return
-        if (rerouteAttempts >= MAX_REROUTE_ATTEMPTS) return
+        if (!rerouteGate.shouldAttempt(now, fix.point)) return
         val current = _session.value ?: return
-        lastRerouteAt = now
-        rerouteAttempts++
+        rerouteGate.recordAttempt(now, fix.point)
         _session.update { it?.copy(rerouting = true) }
 
         scope.launch {
             when (val result = locator.routingEngine.route(fix.point, current.plan.destination, current.profile)) {
                 is RouteResult.Success -> {
                     tracker?.updatePlan(result.plan)
-                    rerouteAttempts = 0
+                    rerouteGate.onRerouted()
                     announcer?.onRerouted()
                     _session.update { it?.copy(plan = result.plan, rerouting = false, message = null) }
                 }
@@ -226,12 +229,10 @@ class NavigationManager(private val locator: ServiceLocator) {
         speech = null
         tracker = null
         announcer = null
-        rerouteAttempts = 0
+        rerouteGate.reset()
     }
 
     private companion object {
         const val TAG = "NavigationManager"
-        const val REROUTE_COOLDOWN_MS = 12_000L
-        const val MAX_REROUTE_ATTEMPTS = 5
     }
 }
