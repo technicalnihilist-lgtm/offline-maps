@@ -38,9 +38,10 @@ data class NavigationConfig(
 /**
  * Tracks progress along a route from a stream of GPS fixes.
  *
- * All of this is plain arithmetic on the route geometry, so it is unit-tested on the JVM. The
- * tracker only searches geometry near the last known position, which keeps a 10 000-point route
- * cheap to follow on a mid-range phone.
+ * All of this is plain arithmetic on the route geometry, so it is unit-tested on the JVM. A fix is
+ * matched against geometry near the last known position; only when it lands outside that window is
+ * the rest of the route searched, and then through a [RouteSegmentIndex] rather than a scan, so a
+ * 10 000-point route stays cheap to follow on a mid-range phone.
  */
 class NavigationTracker(
     private var plan: RoutePlan,
@@ -50,10 +51,14 @@ class NavigationTracker(
     private var offRouteCount = 0
     private var arrived = false
 
+    /** Built on the first fix that falls outside the follow window, then reused for the plan. */
+    private var segmentIndex: RouteSegmentIndex? = null
+
     val route: RoutePlan get() = plan
 
     fun updatePlan(newPlan: RoutePlan) {
         plan = newPlan
+        segmentIndex = null
         lastGeometryIndex = 0
         offRouteCount = 0
         arrived = false
@@ -79,8 +84,8 @@ class NavigationTracker(
             )
         }
 
-        // Search a window around the last matched index first (fast path), then fall back to a
-        // wider scan if the user is far away (e.g. after a long tunnel or a teleport).
+        // Search a window around the last matched index first (fast path), then fall back to the
+        // spatial index if the user is far away (e.g. after a long tunnel or a teleport).
         val window = 40
         var bestIndex = lastGeometryIndex
         var bestDistance = Double.MAX_VALUE
@@ -90,10 +95,22 @@ class NavigationTracker(
             val d = GeoMath.crossTrackDistanceMeters(fix.point, geometry[i], geometry[i + 1])
             if (d < bestDistance) { bestDistance = d; bestIndex = i }
         }
-        if (bestDistance > 250.0) {
-            for (i in 0..geometry.size - 2) {
-                val d = GeoMath.crossTrackDistanceMeters(fix.point, geometry[i], geometry[i + 1])
-                if (d < bestDistance) { bestDistance = d; bestIndex = i }
+        if (bestDistance > FAR_FROM_WINDOW_METERS) {
+            val candidate = searchIndex().nearestSegment(fix.point)
+            if (candidate >= 0) {
+                val d = GeoMath.crossTrackDistanceMeters(
+                    fix.point,
+                    geometry[candidate],
+                    geometry[candidate + 1],
+                )
+                if (d < bestDistance) { bestDistance = d; bestIndex = candidate }
+            } else {
+                // Further from the route than the index searches: kilometres away, which means a
+                // bad fix or a jump to another place. Rare enough that scanning is the right answer.
+                for (i in 0..geometry.size - 2) {
+                    val d = GeoMath.crossTrackDistanceMeters(fix.point, geometry[i], geometry[i + 1])
+                    if (d < bestDistance) { bestDistance = d; bestIndex = i }
+                }
             }
         }
         lastGeometryIndex = bestIndex
@@ -156,6 +173,9 @@ class NavigationTracker(
         )
     }
 
+    private fun searchIndex(): RouteSegmentIndex =
+        segmentIndex ?: RouteSegmentIndex(plan.geometry).also { segmentIndex = it }
+
     private fun isWeak(fix: LocationFix): Boolean = (fix.accuracyMeters ?: 0f) > config.weakAccuracyMeters
 
     /** Projects [p] onto the segment for the "camera follows the route" mode. */
@@ -170,6 +190,12 @@ class NavigationTracker(
     fun distanceToDestination(fix: LocationFix): Double = GeoMath.distanceMeters(fix.point, plan.destination)
 
     companion object {
+        /**
+         * Beyond this the follow window is not trusted and the whole route is searched (through the
+         * spatial index). Same value the tracker has always used for that decision.
+         */
+        private const val FAR_FROM_WINDOW_METERS = 250.0
+
         /** True when the user has clearly moved away from the route and we should recalculate. */
         fun shouldRecalculate(state: NavigationState): Boolean = state.offRoute && !state.arrived
 
