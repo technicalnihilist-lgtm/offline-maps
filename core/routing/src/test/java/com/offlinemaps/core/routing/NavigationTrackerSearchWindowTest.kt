@@ -51,7 +51,7 @@ class NavigationTrackerSearchWindowTest {
         val geometry = route()
         val routePlan = plan(geometry)
         val tracker = NavigationTracker(routePlan)
-        val state = tracker.onLocation(LocationFix(geometry[4000], accuracyMeters = 5f))
+        val state = tracker.onLocation(LocationFix(geometry[4000], accuracyMeters = 5f))!!
         assertFalse("a fix on the route is not off route", state.offRoute)
         assertEquals(routePlan.cumulativeMeters[4000], state.alongRouteMeters, 20.0)
         assertTrue("progress was ${state.progressFraction}", state.progressFraction in 0.79f..0.81f)
@@ -64,7 +64,7 @@ class NavigationTrackerSearchWindowTest {
         val tracker = NavigationTracker(routePlan)
         // Radially outward from the point, so the nearest place on the route is still index 2500.
         val beside = GeoMath.destination(geometry[2500], 300.0, 150.0)
-        val state = tracker.onLocation(LocationFix(beside, accuracyMeters = 5f))
+        val state = tracker.onLocation(LocationFix(beside, accuracyMeters = 5f))!!
         assertEquals(routePlan.cumulativeMeters[2500], state.alongRouteMeters, 30.0)
         assertTrue(
             "snapped point was ${GeoMath.distanceMeters(state.snappedPoint, beside)} m from the fix",
@@ -73,7 +73,7 @@ class NavigationTrackerSearchWindowTest {
         repeat(2) { tracker.onLocation(LocationFix(beside, accuracyMeters = 5f)) }
         assertTrue(
             "three consecutive fixes 300 m off the route should trigger a recalculation",
-            tracker.onLocation(LocationFix(beside, accuracyMeters = 5f)).offRoute,
+            tracker.onLocation(LocationFix(beside, accuracyMeters = 5f))!!.offRoute,
         )
     }
 
@@ -84,7 +84,7 @@ class NavigationTrackerSearchWindowTest {
         val tracker = NavigationTracker(routePlan)
         tracker.onLocation(LocationFix(geometry[3000], accuracyMeters = 5f))
         tracker.updatePlan(routePlan)
-        val state = tracker.onLocation(LocationFix(geometry[1000], accuracyMeters = 5f))
+        val state = tracker.onLocation(LocationFix(geometry[1000], accuracyMeters = 5f))!!
         assertEquals(routePlan.cumulativeMeters[1000], state.alongRouteMeters, 20.0)
     }
 
@@ -99,7 +99,7 @@ class NavigationTrackerSearchWindowTest {
         var lastAlong = -1.0
         for (i in 0 until fixes) {
             val at = 1 + i * stride
-            val state = tracker.onLocation(LocationFix(geometry[at], accuracyMeters = 4f))
+            val state = tracker.onLocation(LocationFix(geometry[at], accuracyMeters = 4f))!!
             assertEquals(
                 "fix $i landed on the wrong part of the route",
                 routePlan.cumulativeMeters[at],

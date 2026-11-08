@@ -66,6 +66,12 @@ class NavigationTracker(
     /** Built on the first fix that falls outside the follow window, then reused for the plan. */
     private var segmentIndex: RouteSegmentIndex? = null
 
+    /**
+     * Refuses a fix older than the last accepted one. A late fix from a batched or replayed stream
+     * used to move the matched segment, the off-route counter and the arrival flag backwards.
+     */
+    private val fixOrder = FixOrderGate()
+
     val route: RoutePlan get() = plan
 
     fun updatePlan(newPlan: RoutePlan) {
@@ -76,7 +82,14 @@ class NavigationTracker(
         arrived = false
     }
 
-    fun onLocation(fix: LocationFix): NavigationState {
+    /**
+     * Folds a fix into the navigation state, or returns null when the fix is older than the last
+     * accepted one and was therefore ignored - nothing moves, and the caller announces nothing.
+     */
+    fun onLocation(fix: LocationFix): NavigationState? {
+        // Out-of-order delivery: an old fix must not rewind progress. The watermark is deliberately
+        // not cleared by [updatePlan]: a recalculation changes the route, not the clock.
+        if (!fixOrder.accepts(fix)) return null
         val geometry = plan.geometry
         if (geometry.size < 2) {
             return NavigationState(

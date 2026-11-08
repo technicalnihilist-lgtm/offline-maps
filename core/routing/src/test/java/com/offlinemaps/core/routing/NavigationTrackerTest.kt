@@ -6,6 +6,7 @@ import com.offlinemaps.core.common.LocationFix
 import com.offlinemaps.core.common.TravelProfile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -44,7 +45,7 @@ class NavigationTrackerTest {
 
     @Test
     fun `starts at the route origin with the first turn ahead`() {
-        val state = NavigationTracker(plan()).onLocation(LocationFix(a, accuracyMeters = 5f))
+        val state = NavigationTracker(plan()).onLocation(LocationFix(a, accuracyMeters = 5f))!!
         assertFalse(state.offRoute)
         // The departure manoeuvre is behind us the moment we are on the line.
         assertEquals(1, state.nextManeuverIndex)
@@ -53,7 +54,7 @@ class NavigationTrackerTest {
 
     @Test
     fun `progress advances along the route`() {
-        val state = NavigationTracker(plan()).onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f))
+        val state = NavigationTracker(plan()).onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f))!!
         assertTrue(state.progressFraction in 0.15f..0.45f)
         assertTrue(state.remainingMeters < 1400)
     }
@@ -62,7 +63,7 @@ class NavigationTrackerTest {
     fun `selects the next manoeuvre after passing the corner`() {
         val tracker = NavigationTracker(plan())
         tracker.onLocation(LocationFix(a, accuracyMeters = 5f))
-        val state = tracker.onLocation(LocationFix(GeoPoint(42.5020, 1.5100), accuracyMeters = 5f))
+        val state = tracker.onLocation(LocationFix(GeoPoint(42.5020, 1.5100), accuracyMeters = 5f))!!
         assertEquals(2, state.nextManeuverIndex)
         assertEquals(ManeuverType.ARRIVE, state.nextManeuver?.type)
     }
@@ -71,10 +72,12 @@ class NavigationTrackerTest {
     fun `declares off route only after repeated bad fixes`() {
         val tracker = NavigationTracker(plan())
         val farAway = GeoPoint(42.5300, 1.5300)
-        assertFalse("one bad fix is not enough", tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f)).offRoute)
+        assertFalse("one bad fix is not enough", tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f))!!.offRoute)
         tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f))
-        assertTrue("three consecutive fixes should trigger a recalculation",
-            tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f)).offRoute)
+        assertTrue(
+            "three consecutive fixes should trigger a recalculation",
+            tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f))!!.offRoute,
+        )
     }
 
     @Test
@@ -82,7 +85,7 @@ class NavigationTrackerTest {
         val tracker = NavigationTracker(plan())
         val farAway = GeoPoint(42.5300, 1.5300)
         repeat(5) {
-            val state = tracker.onLocation(LocationFix(farAway, accuracyMeters = 250f))
+            val state = tracker.onLocation(LocationFix(farAway, accuracyMeters = 250f))!!
             assertFalse("weak fixes must not trigger rerouting", state.offRoute)
             assertTrue(state.gpsSignalWeak)
         }
@@ -94,13 +97,16 @@ class NavigationTrackerTest {
         val wobble = GeoPoint(42.50054, 1.5050)
         val precise = NavigationTracker(plan())
         repeat(3) { precise.onLocation(LocationFix(wobble, accuracyMeters = 5f)) }
-        assertTrue("a precise fix 60 m off the line is a deviation", precise.onLocation(LocationFix(wobble, accuracyMeters = 5f)).offRoute)
+        assertTrue(
+            "a precise fix 60 m off the line is a deviation",
+            precise.onLocation(LocationFix(wobble, accuracyMeters = 5f))!!.offRoute,
+        )
 
         val unknown = NavigationTracker(plan())
         repeat(5) {
             assertFalse(
                 "a fix that reports no accuracy must not be trusted as a tight one",
-                unknown.onLocation(LocationFix(wobble)).offRoute,
+                unknown.onLocation(LocationFix(wobble))!!.offRoute,
             )
         }
     }
@@ -113,7 +119,7 @@ class NavigationTrackerTest {
         tracker.onLocation(LocationFix(farAway))
         assertTrue(
             "an unknown-accuracy fix far from the route must still be able to trigger a recalculation",
-            tracker.onLocation(LocationFix(farAway)).offRoute,
+            tracker.onLocation(LocationFix(farAway))!!.offRoute,
         )
     }
 
@@ -121,20 +127,20 @@ class NavigationTrackerTest {
     fun `a fix with no accuracy is not called a weak signal`() {
         // The weak-signal notice reports what the receiver said; a receiver that said nothing is a
         // different thing from one that reported a poor estimate, so this stays false.
-        val state = NavigationTracker(plan()).onLocation(LocationFix(a))
+        val state = NavigationTracker(plan()).onLocation(LocationFix(a))!!
         assertFalse(state.gpsSignalWeak)
     }
 
     @Test
     fun `heading falls back to the route when the fix has no bearing`() {
-        val state = NavigationTracker(plan()).onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f))
+        val state = NavigationTracker(plan()).onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f))!!
         assertEquals("the first leg runs due east", 90.0, state.headingDegrees, 2.0)
     }
 
     @Test
     fun `a reported bearing is used as the heading`() {
         val state = NavigationTracker(plan())
-            .onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f, bearingDegrees = 200f))
+            .onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f, bearingDegrees = 200f))!!
         assertEquals(200.0, state.headingDegrees, 0.001)
     }
 
@@ -152,7 +158,7 @@ class NavigationTrackerTest {
             destination = destination,
             cumulativeMeters = doubleArrayOf(0.0),
         )
-        val state = NavigationTracker(degenerate).onLocation(LocationFix(origin))
+        val state = NavigationTracker(degenerate).onLocation(LocationFix(origin))!!
         assertTrue(
             "expected the bearing towards the destination, got ${state.headingDegrees}",
             state.headingDegrees in 30.0..60.0,
@@ -161,7 +167,7 @@ class NavigationTrackerTest {
 
     @Test
     fun `arrival is detected within the radius`() {
-        val state = NavigationTracker(plan()).onLocation(LocationFix(c, accuracyMeters = 4f))
+        val state = NavigationTracker(plan()).onLocation(LocationFix(c, accuracyMeters = 4f))!!
         assertTrue(state.arrived)
         assertTrue(state.remainingMeters < 30)
     }
@@ -169,7 +175,7 @@ class NavigationTrackerTest {
     @Test
     fun `snapped point sits on the route not at the raw fix`() {
         val offsetFix = GeoPoint(42.5005, 1.5050)
-        val state = NavigationTracker(plan()).onLocation(LocationFix(offsetFix, accuracyMeters = 5f))
+        val state = NavigationTracker(plan()).onLocation(LocationFix(offsetFix, accuracyMeters = 5f))!!
         assertTrue(GeoMath.distanceMeters(state.snappedPoint, offsetFix) > 30)
         assertEquals(1.5050, state.snappedPoint.longitude, 0.0005)
     }
@@ -178,7 +184,7 @@ class NavigationTrackerTest {
     fun `remaining time uses current speed when available`() {
         val state = NavigationTracker(plan()).onLocation(
             LocationFix(a, accuracyMeters = 5f, speedMetersPerSecond = 10f),
-        )
+        )!!
         assertTrue("expected ~148 s, got ${state.remainingSeconds}", state.remainingSeconds in 100..220)
     }
 
@@ -187,7 +193,50 @@ class NavigationTrackerTest {
         val tracker = NavigationTracker(plan())
         tracker.onLocation(LocationFix(c, accuracyMeters = 5f))
         tracker.updatePlan(plan())
-        val state = tracker.onLocation(LocationFix(a, accuracyMeters = 5f))
+        val state = tracker.onLocation(LocationFix(a, accuracyMeters = 5f))!!
+        assertFalse(state.arrived)
+        assertTrue(state.progressFraction < 0.1f)
+    }
+
+    @Test
+    fun `a fix older than the last accepted one is ignored`() {
+        val tracker = NavigationTracker(plan())
+        val onLine = GeoPoint(42.5000, 1.5050)
+        val ahead = tracker.onLocation(LocationFix(onLine, accuracyMeters = 5f, timestampMillis = 2_000L))!!
+        assertTrue("progress was ${ahead.progressFraction}", ahead.progressFraction > 0.15f)
+
+        // A batched fix from before the one already followed: refused whole, so progress holds.
+        assertNull(tracker.onLocation(LocationFix(a, accuracyMeters = 5f, timestampMillis = 1_000L)))
+
+        val next = tracker.onLocation(LocationFix(onLine, accuracyMeters = 5f, timestampMillis = 3_000L))!!
+        assertTrue("progress was ${next.progressFraction}", next.progressFraction > 0.15f)
+    }
+
+    @Test
+    fun `a stale off-route fix does not count towards a reroute`() {
+        val tracker = NavigationTracker(plan())
+        val farAway = GeoPoint(42.5300, 1.5300)
+        tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f, timestampMillis = 1_000L))
+        // Late duplicate of a fix already seen: it must not advance the off-route counter.
+        assertNull(tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f, timestampMillis = 500L)))
+        assertFalse(
+            "two accepted fixes are not enough",
+            tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f, timestampMillis = 2_000L))!!.offRoute,
+        )
+        assertTrue(
+            "the third accepted fix should trigger a recalculation",
+            tracker.onLocation(LocationFix(farAway, accuracyMeters = 5f, timestampMillis = 3_000L))!!.offRoute,
+        )
+    }
+
+    @Test
+    fun `a recalculation does not let an older fix through`() {
+        val tracker = NavigationTracker(plan())
+        tracker.onLocation(LocationFix(c, accuracyMeters = 5f, timestampMillis = 5_000L))
+        tracker.updatePlan(plan())
+        // The route changed, the clock did not: a fix from before the recalculation is still stale.
+        assertNull(tracker.onLocation(LocationFix(a, accuracyMeters = 5f, timestampMillis = 4_000L)))
+        val state = tracker.onLocation(LocationFix(a, accuracyMeters = 5f, timestampMillis = 6_000L))!!
         assertFalse(state.arrived)
         assertTrue(state.progressFraction < 0.1f)
     }

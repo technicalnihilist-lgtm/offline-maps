@@ -168,7 +168,9 @@ class NavigationManager(private val locator: ServiceLocator) {
 
     private fun onFix(fix: LocationFix) {
         val currentTracker = tracker ?: return
-        val state = currentTracker.onLocation(fix)
+        // A fix older than the one already followed is ignored whole: no state update, no
+        // announcement, and no reroute decided from a position the driver has already left behind.
+        val state = currentTracker.onLocation(fix) ?: return
         _session.update { session ->
             session?.copy(state = state, gpsAvailable = true, gpsWeak = state.gpsSignalWeak, rerouting = false)
         }
