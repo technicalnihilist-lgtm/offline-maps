@@ -83,6 +83,27 @@ class GuidanceAnnouncerTest {
     }
 
     @Test
+    fun `a recalculation after arrival does not announce arrival again`() {
+        val announcer = announcer()
+        announcer.onState(state(distanceToNext = 0.0, arrived = true))
+        // The reroute was started from the last off-route fix and lands a moment after the arrival
+        // one; the tracker clears its arrival latch on the new plan and the next fix sets it again.
+        announcer.onRerouted(nowMillis = 100_000)
+        announcer.onState(state(distanceToNext = 0.0, arrived = true))
+        announcer.onState(state(distanceToNext = 0.0, arrived = true))
+        assertEquals(1, spoken.count { it.contains("arrived", ignoreCase = true) })
+    }
+
+    @Test
+    fun `a recalculation before arrival does not swallow the arrival announcement`() {
+        val announcer = announcer()
+        announcer.onState(state(distanceToNext = 70.0))
+        announcer.onRerouted(nowMillis = 100_000)
+        announcer.onState(state(distanceToNext = 0.0, arrived = true))
+        assertEquals(1, spoken.count { it.contains("arrived", ignoreCase = true) })
+    }
+
+    @Test
     fun `gps loss is announced once`() {
         val announcer = announcer()
         announcer.onGpsLost()

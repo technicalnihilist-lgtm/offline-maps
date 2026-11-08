@@ -242,6 +242,18 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `arrival stays latched for the fixes that follow it`() {
+        val tracker = NavigationTracker(plan())
+        assertTrue(tracker.onLocation(LocationFix(c, accuracyMeters = 4f, timestampMillis = 1_000L))!!.arrived)
+        // Past the destination and then back at the origin: the trip is over either way, so the state
+        // the navigation loop reads on every later fix keeps saying so and the arrival branch cannot
+        // be re-entered from a flag that re-armed itself.
+        val past = GeoPoint(c.latitude + 0.0004, c.longitude)
+        assertTrue(tracker.onLocation(LocationFix(past, accuracyMeters = 4f, timestampMillis = 2_000L))!!.arrived)
+        assertTrue(tracker.onLocation(LocationFix(a, accuracyMeters = 4f, timestampMillis = 3_000L))!!.arrived)
+    }
+
+    @Test
     fun `should recalculate helper ignores arrival`() {
         val arrived = NavigationState(
             alongRouteMeters = 1480.0, remainingMeters = 2.0, remainingSeconds = 1,

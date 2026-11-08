@@ -176,7 +176,34 @@ class NavigationManager(private val locator: ServiceLocator) {
         }
         announcer?.onState(state)
 
+        // Arrival is the end of the drive: the announcement above is the last thing the session has
+        // to say, so the loop is closed here rather than followed to the end of the trip
+        // (OPTIMIZATION.md E-07). Without this the GPS subscription kept waking the app every second
+        // for a destination already reached, recomposing the panel and re-posting the notification
+        // each time, and the routing graph stayed pinned against memory trims for a reroute that
+        // could never be wanted again.
+        if (state.arrived) {
+            stopFollowing()
+            return
+        }
+
         if (NavigationTracker.shouldRecalculate(state)) maybeReroute(fix)
+    }
+
+    /**
+     * Ends the live loop once the destination is reached, keeping the last [NavigationSessionUi] so
+     * the panel and the notification go on showing the arrived state exactly as they did before -
+     * nothing on screen changes, it simply stops being recomputed every second. The speech engine is
+     * left alone so the repeat and mute controls still answer; [stop] still does the full teardown.
+     */
+    private fun stopFollowing() {
+        job?.cancel()
+        job = null
+        tracker = null
+        announcer = null
+        rerouteGate.reset()
+        // No reroute can follow, so a memory trim may now close the routing graph.
+        locator.setGuidanceActive(false)
     }
 
     private fun maybeReroute(fix: LocationFix) {
@@ -189,6 +216,12 @@ class NavigationManager(private val locator: ServiceLocator) {
         scope.launch {
             when (val result = locator.routingEngine.route(fix.point, current.plan.destination, current.profile)) {
                 is RouteResult.Success -> {
+                    // The destination was reached while this recalculation was in flight. Applying
+                    // the new plan would restart progress tracking on a trip that is over.
+                    if (_session.value?.state?.arrived == true) {
+                        _session.update { it?.copy(rerouting = false) }
+                        return@launch
+                    }
                     tracker?.updatePlan(result.plan)
                     rerouteGate.onRerouted()
                     announcer?.onRerouted()

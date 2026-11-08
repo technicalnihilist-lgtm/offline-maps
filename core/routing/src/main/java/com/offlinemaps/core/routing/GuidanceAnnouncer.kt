@@ -55,11 +55,18 @@ class GuidanceAnnouncer(
         )
     }
 
-    /** Called when the route has been recalculated after a deviation. */
+    /**
+     * Called when the route has been recalculated after a deviation.
+     *
+     * The manoeuvre buckets are cleared - they belong to the old route - but [arrivalAnnounced] is
+     * deliberately kept. A recalculation that lands after the arrival fix (it was started from the
+     * last off-route position and finishes a moment later) used to clear the flag, and the next fix
+     * then set `arrived` again on the new, very short plan and spoke the arrival a second time. A
+     * session reaches its destination once; a new one starts with a fresh announcer.
+     */
     fun onRerouted(nowMillis: Long = System.currentTimeMillis()) {
         announcedKey = null
         announcedManeuverIndex = -1
-        arrivalAnnounced = false
         if (nowMillis - lastOffRouteAnnouncementAt > 8_000L) {
             lastOffRouteAnnouncementAt = nowMillis
             speak("Route recalculated.")
