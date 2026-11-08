@@ -74,9 +74,12 @@ class RoutingEngine(private val graphRoot: File) {
         profiles: List<TravelProfile> = TravelProfile.entries,
         onProgress: (String) -> Unit = {},
     ): Result<Unit> = lock.withLock {
-        requestedProfiles = profiles
+        // Canonical once, on the way in (E-02): the same profiles in another order, or repeated,
+        // must not look like a different graph and force a reload.
+        val requested = ProfileSet.canonical(profiles)
+        requestedProfiles = requested
         lazyReloadFailed = false
-        loadLocked(profiles, onProgress)
+        loadLocked(requested, onProgress)
     }
 
     /** The body of [load], for callers that already hold [lock]. */
@@ -86,7 +89,9 @@ class RoutingEngine(private val graphRoot: File) {
     ): Result<Unit> {
         val existing = hopper
         if (existing != null) {
-            if (existing.profiles.map { it.name }.toSet() == profiles.map { it.id }.toSet()) {
+            if (ProfileSet.matches(existing.profiles.map { it.name }, profiles)) {
+                // Nothing to do: the graph already serves exactly this profile set, so it is not
+                // closed and re-imported (E-02).
                 loadedProfiles = profiles
                 return Result.success(Unit)
             }
