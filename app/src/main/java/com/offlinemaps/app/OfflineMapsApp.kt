@@ -32,7 +32,19 @@ class OfflineMapsApp : Application() {
 
     override fun onLowMemory() {
         super.onLowMemory()
-        // Release the routing graph and cached search state; both are rebuilt on demand.
+        // Release the routing graph; it is reloaded on demand (see RoutingEngine.reloadLocked).
         locator.onLowMemory()
+    }
+
+    /**
+     * `onLowMemory` alone is not enough: Android only calls it when the whole system is out of
+     * memory, whereas `onTrimMemory` is the per-process signal - it fires when this app goes to the
+     * background or is itself under pressure, which is where the routing graph (hundreds of
+     * megabytes, resident) is worth the most to give back. Which levels act is decided in
+     * [com.offlinemaps.core.routing.RoutingMemoryPolicy] (OPTIMIZATION.md E-01).
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        locator.onTrimMemory(level)
     }
 }

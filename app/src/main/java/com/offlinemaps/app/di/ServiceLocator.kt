@@ -24,6 +24,7 @@ import com.offlinemaps.core.offline.DownloadStore
 import com.offlinemaps.core.offline.PartialFileSweeper
 import com.offlinemaps.core.offline.SharedHttpClient
 import com.offlinemaps.core.routing.RoutingEngine
+import com.offlinemaps.core.routing.RoutingMemoryPolicy
 import com.offlinemaps.core.search.SearchIndex
 import com.offlinemaps.core.search.SearchRepository
 import kotlinx.coroutines.CoroutineScope
@@ -201,7 +202,35 @@ class ServiceLocator(val appContext: Context) {
         return fileName.removeSuffix(".$extension")
     }
 
+    /**
+     * True while a guidance session is running. A trim must not close the graph under it: the
+     * session needs it for its next reroute, so closing would only cost a reload a few seconds
+     * later (OPTIMIZATION.md E-01). Set by `NavigationManager`.
+     */
+    @Volatile
+    private var guidanceActive = false
+
+    fun setGuidanceActive(active: Boolean) {
+        guidanceActive = active
+    }
+
+    /** System-wide low memory: release the graph unconditionally unless it is in use. */
     fun onLowMemory() {
+        releaseRoutingGraph()
+    }
+
+    /**
+     * Per-process memory trim. [level] is one of the `ComponentCallbacks2.TRIM_MEMORY_*` values and
+     * is judged by [RoutingMemoryPolicy], so only the levels that mean real pressure (or "no longer
+     * visible") free the graph. It is reloaded lazily by the engine, so this is safe to do at any
+     * time - the next route reads it back from disk.
+     */
+    fun onTrimMemory(level: Int) {
+        if (RoutingMemoryPolicy.shouldRelease(level)) releaseRoutingGraph()
+    }
+
+    private fun releaseRoutingGraph() {
+        if (guidanceActive) return
         routingEngine.close()
     }
 

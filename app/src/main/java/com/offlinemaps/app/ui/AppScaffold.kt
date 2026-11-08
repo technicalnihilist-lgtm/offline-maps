@@ -56,6 +56,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import com.offlinemaps.core.ui.glassSurface
 import androidx.compose.foundation.layout.Row
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class Tab(val label: String, val icon: ImageVector) {
     EXPLORE("Explore", Icons.Filled.Explore),
@@ -112,10 +114,15 @@ fun AppScaffold(
             controller?.setRoute(emptyList())
         } else {
             val origin = mapViewModel.currentLocation() ?: state.cameraTarget
-            when (val result = locator.navigationManager.calculateRoute(origin, destination.point, state.profile)) {
-                is RouteResult.Success -> controller?.setRoute(result.plan.geometry)
-                is RouteResult.Failure -> controller?.setRoute(emptyList())
+            // calculateRoute suspends off the main thread: the routing graph may have to be read
+            // back from disk first (OPTIMIZATION.md E-01). The controller call stays on main.
+            val geometry = withContext(Dispatchers.Default) {
+                when (val result = locator.navigationManager.calculateRoute(origin, destination.point, state.profile)) {
+                    is RouteResult.Success -> result.plan.geometry
+                    is RouteResult.Failure -> emptyList()
+                }
             }
+            controller?.setRoute(geometry)
         }
     }
     LaunchedEffect(navigation?.plan) {

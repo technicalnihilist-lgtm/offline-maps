@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Everything the UI and the notification need to describe an active navigation session. */
 data class NavigationSessionUi(
@@ -76,18 +77,26 @@ class NavigationManager(private val locator: ServiceLocator) {
 
     val speechGuidance: SpeechGuidance? get() = speech
 
-    /** Calculates a route without starting navigation - used by the route preview. */
-    fun calculateRoute(
+    /**
+     * Calculates a route without starting navigation - used by the route preview.
+     *
+     * Suspends on [Dispatchers.Default] because the engine may have to read the graph back from
+     * disk first: a memory trim closes it (OPTIMIZATION.md E-01), and loading it is disk I/O plus
+     * a graph import that must never run on the main thread.
+     */
+    suspend fun calculateRoute(
         origin: GeoPoint,
         destination: GeoPoint,
         profile: TravelProfile,
-    ): RouteResult = locator.routingEngine.route(origin, destination, profile)
+    ): RouteResult = withContext(Dispatchers.Default) {
+        locator.routingEngine.route(origin, destination, profile)
+    }
 
     /**
      * Starts guidance. The route is calculated from the current GPS fix (or [origin] when
      * supplied); nothing is hardcoded.
      */
-    fun start(
+    suspend fun start(
         destination: PlaceResult,
         profile: TravelProfile,
         origin: GeoPoint? = null,
@@ -98,7 +107,11 @@ class NavigationManager(private val locator: ServiceLocator) {
                 IllegalStateException("Waiting for a GPS fix - move to an open area and try again."),
             )
 
-        val result = locator.routingEngine.route(from, destination.point, profile)
+        // Off the main thread: the graph may have been released by a memory trim and has to be
+        // read back from disk before the first route of the session (OPTIMIZATION.md E-01).
+        val result = withContext(Dispatchers.Default) {
+            locator.routingEngine.route(from, destination.point, profile)
+        }
         val plan = when (result) {
             is RouteResult.Success -> result.plan
             is RouteResult.Failure -> return Result.failure(IllegalStateException(result.message))
@@ -136,6 +149,7 @@ class NavigationManager(private val locator: ServiceLocator) {
             muted = !voiceEnabled,
         )
 
+        locator.setGuidanceActive(true)
         job = scope.launch {
             locator.locationSource.updates(minTimeMs = 1_000L, minDistanceMeters = 2f)
                 .catch { e ->
@@ -205,6 +219,7 @@ class NavigationManager(private val locator: ServiceLocator) {
     }
 
     private fun stopInternal() {
+        locator.setGuidanceActive(false)
         job?.cancel()
         job = null
         speech?.shutdown()

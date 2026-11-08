@@ -273,8 +273,12 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
     fun startNavigation() {
         val destination = _state.value.destination ?: return
         val voice = locator.settings.current().voiceGuidanceEnabled
-        val result = locator.navigationManager.start(destination, _state.value.profile, voiceEnabled = voice)
-        _state.update { it.copy(routeMessage = result.exceptionOrNull()?.message) }
+        val profile = _state.value.profile
+        viewModelScope.launch {
+            // start() calculates its first route off the main thread (OPTIMIZATION.md E-01).
+            val result = locator.navigationManager.start(destination, profile, voiceEnabled = voice)
+            _state.update { it.copy(routeMessage = result.exceptionOrNull()?.message) }
+        }
     }
 
     fun stopNavigation() = locator.navigationManager.stop()

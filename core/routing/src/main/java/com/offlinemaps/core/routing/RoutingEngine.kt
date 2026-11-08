@@ -33,6 +33,22 @@ class RoutingEngine(private val graphRoot: File) {
     private var hopper: GraphHopper? = null
     private var loadedProfiles: List<TravelProfile> = emptyList()
 
+    /**
+     * The profile set the last [load] asked for. Remembered so a graph that was released by a
+     * memory trim (or that this process has not loaded yet) comes back with the same profiles.
+     */
+    private var requestedProfiles: List<TravelProfile> = TravelProfile.entries
+
+    /**
+     * Set when a lazy reload failed, so a graph that cannot be imported is not re-imported on every
+     * route attempt. Cleared by an explicit [load], which an install always calls.
+     */
+    private var lazyReloadFailed = false
+
+    /** How many times a graph import has been attempted. Read by tests only. */
+    internal var loadAttempts: Int = 0
+        private set
+
     val isLoaded: Boolean get() = hopper != null
     val availableProfiles: List<TravelProfile> get() = loadedProfiles
 
@@ -58,18 +74,33 @@ class RoutingEngine(private val graphRoot: File) {
         profiles: List<TravelProfile> = TravelProfile.entries,
         onProgress: (String) -> Unit = {},
     ): Result<Unit> = lock.withLock {
+        requestedProfiles = profiles
+        lazyReloadFailed = false
+        loadLocked(profiles, onProgress)
+    }
+
+    /** The body of [load], for callers that already hold [lock]. */
+    private fun loadLocked(
+        profiles: List<TravelProfile>,
+        onProgress: (String) -> Unit,
+    ): Result<Unit> {
         val existing = hopper
         if (existing != null) {
-            if (existing.profiles.map { it.name }.toSet() == profiles.map { it.id }.toSet()) return@withLock Result.success(Unit)
+            if (existing.profiles.map { it.name }.toSet() == profiles.map { it.id }.toSet()) {
+                loadedProfiles = profiles
+                return Result.success(Unit)
+            }
             runCatching { existing.close() }
             hopper = null
+            loadedProfiles = emptyList()
         }
         if (!hasGraph()) {
-            return@withLock Result.failure(
+            return Result.failure(
                 IllegalStateException("No routing graph is installed for this region yet."),
             )
         }
-        return@withLock try {
+        return try {
+            loadAttempts++
             onProgress("Loading routing graph")
             val config = GraphHopperConfig()
                 .putObject("graph.location", graphRoot.absolutePath)
@@ -101,6 +132,29 @@ class RoutingEngine(private val graphRoot: File) {
         loadedProfiles = emptyList()
     }
 
+    /**
+     * Brings the graph back on demand, which is what makes [close] safe to call on a memory trim
+     * (OPTIMIZATION.md E-01).
+     *
+     * GraphHopper holds the whole graph in memory - hundreds of megabytes for a country - so it is
+     * the first thing to give back when Android asks. Closing it would otherwise mean routing is
+     * dead until the process restarts, because the only other caller of [load] is the installer.
+     * A reload reads the pre-built graph from disk again (well under a second for Andorra) and
+     * reuses the profile set of the last [load].
+     *
+     * Returns null when there is nothing to load or a previous lazy reload already failed, so a
+     * broken package is not re-imported on every fix.
+     */
+    private fun reloadLocked(): GraphHopper? {
+        if (lazyReloadFailed || !hasGraph()) return null
+        val loaded = loadLocked(requestedProfiles, onProgress = {})
+        if (loaded.isFailure) {
+            lazyReloadFailed = true
+            return null
+        }
+        return hopper
+    }
+
     /** Calculates a route. Never throws: failures come back as [RouteResult.Failure]. */
     fun route(
         from: GeoPoint,
@@ -108,7 +162,7 @@ class RoutingEngine(private val graphRoot: File) {
         profile: TravelProfile,
         locale: String = "en",
     ): RouteResult = lock.withLock {
-        val h = hopper ?: return RouteResult.Failure(
+        val h = hopper ?: reloadLocked() ?: return RouteResult.Failure(
             "No routing data is installed. Download a region's routing package first.",
             FailureKind.NO_ROUTING_DATA,
         )
