@@ -25,6 +25,13 @@ import kotlinx.coroutines.launch
  */
 class NavigationService : LifecycleService() {
 
+    /**
+     * The session is recomputed on every GPS fix, so the notification is re-posted only when there
+     * is something new to say (OPTIMIZATION.md F-03): a changed instruction goes out at once, a
+     * changed remaining distance at most once per [NotificationUpdateGate.DEFAULT_DISTANCE_INTERVAL_MS].
+     */
+    private val notificationGate = NotificationUpdateGate()
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
@@ -34,8 +41,12 @@ class NavigationService : LifecycleService() {
                 if (session == null) {
                     stopSelf()
                 } else {
-                    val notification = buildNotification(session.nextInstruction, session.remainingDistance)
-                    getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
+                    val title = session.nextInstruction
+                    val text = session.remainingDistance
+                    if (notificationGate.shouldPost(title, text)) {
+                        val notification = buildNotification(title, text)
+                        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
+                    }
                 }
             }
         }
@@ -59,7 +70,10 @@ class NavigationService : LifecycleService() {
             return START_NOT_STICKY
         }
         // Start immediately so the notification appears even before the first GPS fix.
-        startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.navigating), ""))
+        val placeholderTitle = getString(R.string.navigating)
+        startForeground(NOTIFICATION_ID, buildNotification(placeholderTitle, ""))
+        // The system shows this one itself, so the gate only has to know it is on screen.
+        notificationGate.record(placeholderTitle, "")
         return START_STICKY
     }
 
