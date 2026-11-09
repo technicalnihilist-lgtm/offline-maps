@@ -112,6 +112,46 @@ class GuidanceAnnouncerTest {
         announcer.onGpsRestored()
         assertEquals(2, spoken.size)
     }
+
+    @Test
+    fun `the same distance for a different manoeuvre is announced again`() {
+        // The announcement record is keyed by manoeuvre as well as by bucket: turning at 240 m is
+        // not the same announcement as the next turn at 240 m.
+        val announcer = announcer()
+        announcer.onState(state(distanceToNext = 240.0, maneuverIndex = 1))
+        announcer.onState(state(distanceToNext = 240.0, maneuverIndex = 2))
+        assertEquals(2, spoken.size)
+    }
+
+    @Test
+    fun `a distance exactly on a threshold falls in the tighter bucket`() {
+        val announcer = announcer()
+        announcer.onState(state(distanceToNext = 251.0)) // 600 m bucket
+        announcer.onState(state(distanceToNext = 250.0)) // 250 m bucket
+        announcer.onState(state(distanceToNext = 250.0)) // same bucket, nothing new
+        assertEquals(2, spoken.size)
+    }
+
+    @Test
+    fun `a gps loss and restore re-arms the manoeuvre announcement`() {
+        val announcer = announcer()
+        announcer.onState(state(distanceToNext = 70.0))
+        announcer.onGpsLost()
+        announcer.onGpsRestored()
+        announcer.onState(state(distanceToNext = 70.0))
+        assertEquals(4, spoken.size)
+        assertTrue(spoken.last().contains("turn right onto Carrer Major", ignoreCase = true))
+    }
+
+    @Test
+    fun `the announcer keeps no string state between fixes`() {
+        // The per-fix announcement key used to be a `"<index>@<threshold>"` string built on every
+        // fix in range. Nothing on the fix path may hold or build a String now.
+        val stringFields = GuidanceAnnouncer::class.java.declaredFields
+            .filter { it.type == String::class.java }
+            .map { it.name }
+        assertTrue("GuidanceAnnouncer holds String state: $stringFields", stringFields.isEmpty())
+    }
 }
 
 class InstructionMapperTest {
