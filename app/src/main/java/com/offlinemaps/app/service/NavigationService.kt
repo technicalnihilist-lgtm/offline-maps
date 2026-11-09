@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import com.offlinemaps.app.MainActivity
 import com.offlinemaps.app.OfflineMapsApp
 import com.offlinemaps.app.R
+import com.offlinemaps.app.nav.NavigationManager
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -32,15 +33,32 @@ class NavigationService : LifecycleService() {
      */
     private val notificationGate = NotificationUpdateGate()
 
+    /**
+     * Decides whether the service still has anything to keep alive (OPTIMIZATION.md F-04). The
+     * service exists for one session and the session lives in this process, so the only question
+     * left is whether the task that owns it is still there.
+     */
+    private val stopPolicy = NavigationServiceStopPolicy()
+
+    /**
+     * Set once the task has been removed. The session is a hot [kotlinx.coroutines.flow.StateFlow],
+     * so an emission can still arrive while the service is on its way out, and it must not re-post
+     * a notification nobody can act on.
+     */
+    @Volatile
+    private var taskRemoved = false
+
+    private val manager: NavigationManager
+        get() = (application as OfflineMapsApp).locator.navigationManager
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        val manager = (application as OfflineMapsApp).locator.navigationManager
         lifecycleScope.launch {
             manager.session.collectLatest { session ->
-                if (session == null) {
+                if (stopPolicy.shouldStop(hasSession = session != null, taskRemoved = taskRemoved)) {
                     stopSelf()
-                } else {
+                } else if (session != null) {
                     val title = session.nextInstruction
                     val text = session.remainingDistance
                     if (notificationGate.shouldPost(title, text)) {
@@ -53,19 +71,38 @@ class NavigationService : LifecycleService() {
     }
 
     /**
+     * The user swiped the app out of recents (OPTIMIZATION.md F-04).
+     *
+     * Guidance used to outlive the task. The session loop lives in the application, nothing
+     * overrode this callback and the service is a foreground service with an ongoing notification,
+     * so after the last screen was gone the GPS subscription, the speech engine and a notification
+     * with two actions - "open app", which had no task left to open, and "end navigation" - carried
+     * on until the user hunted the notification down. The task going away is the end of the
+     * session: guidance is stopped here, which clears the session and lets [NavigationManager.releaseSpeech] run from
+     * [onDestroy], and the service stops itself with it. Screen-off guidance is untouched - the
+     * task is still there while the phone is locked - and nothing on screen changes.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        taskRemoved = true
+        manager.stop()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    /**
      * The service only lives while guidance does, so it is also what releases the shared speech
      * engine (OPTIMIZATION.md F-01): the engine is created once and reused across sessions, and
      * shut down here rather than on every session stop.
      */
     override fun onDestroy() {
-        (application as OfflineMapsApp).locator.navigationManager.releaseSpeech()
+        manager.releaseSpeech()
         super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         if (intent?.action == ACTION_STOP) {
-            (application as OfflineMapsApp).locator.navigationManager.stop()
+            manager.stop()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -74,7 +111,9 @@ class NavigationService : LifecycleService() {
         startForeground(NOTIFICATION_ID, buildNotification(placeholderTitle, ""))
         // The system shows this one itself, so the gate only has to know it is on screen.
         notificationGate.record(placeholderTitle, "")
-        return START_STICKY
+        // Not sticky: the session lives in this process, so a restart with a null intent could only
+        // post a placeholder notification and stop again a moment later (OPTIMIZATION.md F-04).
+        return START_NOT_STICKY
     }
 
     private fun buildNotification(title: String, text: String): Notification {
