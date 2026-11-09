@@ -43,6 +43,7 @@ class SpeechGuidance internal constructor(
     private var languageTag: String? = null
     private var lastSpoken: String? = null
     private var lastSpokenAt = 0L
+    private var utteranceSeq = 0L
 
     private val progressListener = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) = Unit
@@ -157,7 +158,20 @@ class SpeechGuidance internal constructor(
         synchronized(lock) { volume = value.coerceIn(0f, 1f) }
     }
 
-    fun speak(text: String) {
+    /**
+     * Speaks [text] according to what it is, not by habit (OPTIMIZATION.md F-02).
+     *
+     * An [Priority.INSTRUCTION] is the thing the driver has to act on - a manoeuvre, the arrival, a
+     * lost GPS signal - and a newer one always supersedes an older one, so it is queued with
+     * `QUEUE_FLUSH`: the stale sentence stops mid-word instead of finishing while the driver is
+     * already past the junction it described. Two instructions therefore never overlap.
+     *
+     * A [Priority.NOTICE] is session status that carries no distance - "Route recalculated", "GPS
+     * signal restored" - and is queued with `QUEUE_ADD` so it cannot truncate an instruction that
+     * is already being spoken; it is heard straight after it, which is soon enough for news that is
+     * still true. An instruction arriving while a notice speaks still flushes it.
+     */
+    fun speak(text: String, priority: Priority = Priority.INSTRUCTION) {
         synchronized(lock) {
             if (muted) return
             val current = engine ?: return
@@ -171,11 +185,23 @@ class SpeechGuidance internal constructor(
                 putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
                 putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC)
             }
-            current.speak(text, TextToSpeech.QUEUE_FLUSH, params, "nav-$now")
+            val queueMode = when (priority) {
+                Priority.INSTRUCTION -> TextToSpeech.QUEUE_FLUSH
+                Priority.NOTICE -> TextToSpeech.QUEUE_ADD
+            }
+            // Ids must stay unique even for two utterances handed over inside the same millisecond:
+            // with QUEUE_ADD they can both be pending, and a shared id would make the progress
+            // callbacks unable to tell them apart.
+            current.speak(text, queueMode, params, "nav-${++utteranceSeq}")
         }
     }
 
-    /** Silences the current utterance but keeps the engine alive for the next session. */
+    /**
+     * Silences the current utterance but keeps the engine alive for the next session.
+     *
+     * `TextToSpeech.stop()` also drops anything still queued, so a notice waiting behind the
+     * utterance it was appended to does not outlive the session that asked for it.
+     */
     fun stop() {
         synchronized(lock) { runCatching { engine?.stop() } }
     }
@@ -195,8 +221,12 @@ class SpeechGuidance internal constructor(
             pending.clear()
             lastSpoken = null
             lastSpokenAt = 0L
+            utteranceSeq = 0L
         }
     }
+
+    /** How an utterance treats whatever is already being spoken. See [speak]. */
+    enum class Priority { INSTRUCTION, NOTICE }
 
     data class VoiceInfo(val name: String, val locale: String, val offline: Boolean)
 

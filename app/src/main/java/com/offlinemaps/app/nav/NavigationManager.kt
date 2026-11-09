@@ -139,7 +139,8 @@ class NavigationManager(private val locator: ServiceLocator) {
 
         tracker = NavigationTracker(plan)
         announcer = GuidanceAnnouncer(
-            speak = { text -> speech?.speak(text) },
+            speak = { text -> speech?.speak(text, SpeechGuidance.Priority.INSTRUCTION) },
+            notice = { text -> speech?.speak(text, SpeechGuidance.Priority.NOTICE) },
             metricUnits = locator.settings.current().metricUnits,
         )
 
@@ -261,6 +262,7 @@ class NavigationManager(private val locator: ServiceLocator) {
                 streetName = maneuver.streetName,
                 distanceToManeuverMeters = current.state?.distanceToNextManeuverMeters,
             ),
+            SpeechGuidance.Priority.INSTRUCTION,
         )
     }
 

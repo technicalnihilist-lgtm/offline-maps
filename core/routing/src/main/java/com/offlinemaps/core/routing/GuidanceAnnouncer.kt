@@ -15,6 +15,14 @@ package com.offlinemaps.core.routing
  */
 class GuidanceAnnouncer(
     private val speak: (String) -> Unit,
+    /**
+     * Where session status goes - "Route recalculated", "GPS signal restored" - as opposed to
+     * [speak], which carries an instruction the driver has to act on. The two are separate channels
+     * so the speech layer can give them different queue behaviour (OPTIMIZATION.md F-02): a notice
+     * must never truncate an instruction that is already being spoken, while a newer instruction
+     * always supersedes an older one. Defaults to [speak], which is what a pure test wants.
+     */
+    private val notice: (String) -> Unit = speak,
     private val metricUnits: Boolean = true,
     private val thresholdsMeters: List<Double> = listOf(600.0, 250.0, 80.0, 25.0),
 ) {
@@ -110,11 +118,15 @@ class GuidanceAnnouncer(
         announcedManeuverIndex = -1
         if (nowMillis - lastOffRouteAnnouncementAt > 8_000L) {
             lastOffRouteAnnouncementAt = nowMillis
-            speak("Route recalculated.")
+            notice("Route recalculated.")
         }
     }
 
-    /** Called when GPS is lost for long enough that navigation cannot continue confidently. */
+    /**
+     * Called when GPS is lost for long enough that navigation cannot continue confidently. This one
+     * goes out on the instruction channel, not the notice channel: a lost signal supersedes whatever
+     * is being said rather than waiting behind it.
+     */
     fun onGpsLost() {
         if (latch != Latch.GPS_LOST) {
             latch = Latch.GPS_LOST
@@ -125,7 +137,7 @@ class GuidanceAnnouncer(
     fun onGpsRestored() {
         if (latch == Latch.GPS_LOST) {
             latch = Latch.NONE
-            speak("GPS signal restored. Continuing navigation.")
+            notice("GPS signal restored. Continuing navigation.")
         }
     }
 

@@ -36,6 +36,12 @@ class GuidanceAnnouncerTest {
 
     private fun announcer() = GuidanceAnnouncer(speak = { spoken.add(it) })
 
+    /** Same announcer, but with the two speech channels kept apart so the routing can be asserted. */
+    private fun splitAnnouncer() = GuidanceAnnouncer(
+        speak = { spoken.add("instruction:$it") },
+        notice = { spoken.add("notice:$it") },
+    )
+
     @Test
     fun `announces once per threshold not per fix`() {
         val announcer = announcer()
@@ -196,5 +202,38 @@ class InstructionMapperTest {
     @Test
     fun `spoken text uses kilometres above a kilometre`() {
         assertTrue(InstructionMapper.spoken(ManeuverType.CONTINUE, "A2", 2500.0).startsWith("in 2.5 kilometres"))
+    }
+
+    @Test
+    fun `a recalculation is a notice and does not cut an instruction short`() {
+        val announcer = splitAnnouncer()
+        announcer.onState(state(distanceToNext = 240.0))
+        announcer.onRerouted(nowMillis = 100_000L)
+
+        assertEquals(2, spoken.size)
+        assertTrue("first should be the instruction: $spoken", spoken[0].startsWith("instruction:"))
+        assertTrue("second should be the notice: $spoken", spoken[1].startsWith("notice:"))
+        assertTrue(spoken[1].contains("recalculated", ignoreCase = true))
+    }
+
+    @Test
+    fun `a restored signal is a notice while a lost one supersedes`() {
+        val announcer = splitAnnouncer()
+        announcer.onGpsLost()
+        announcer.onGpsRestored()
+
+        assertEquals(2, spoken.size)
+        assertTrue("the loss must interrupt: $spoken", spoken[0].startsWith("instruction:"))
+        assertTrue("the restore must queue: $spoken", spoken[1].startsWith("notice:"))
+    }
+
+    @Test
+    fun `maneuvers and arrival stay on the instruction channel`() {
+        val announcer = splitAnnouncer()
+        announcer.onState(state(distanceToNext = 240.0))
+        announcer.onState(state(distanceToNext = 0.0, arrived = true))
+
+        assertEquals(2, spoken.size)
+        assertTrue(spoken.all { it.startsWith("instruction:") })
     }
 }

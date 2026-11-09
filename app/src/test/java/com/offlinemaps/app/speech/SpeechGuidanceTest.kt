@@ -168,6 +168,76 @@ class SpeechGuidanceTest {
         assertThat(engines.single().spoken).isEmpty()
     }
 
+    @Test
+    fun anInstructionFlushesWhateverIsBeingSaid() {
+        val guidance = guidance()
+        guidance.initialise { _, _ -> }
+        engines.single().completeInit()
+
+        guidance.speak("In 600 metres, turn right onto Carrer Major")
+        guidance.speak("In 250 metres, turn right onto Carrer Major")
+
+        val engine = engines.single()
+        assertThat(engine.spoken).hasSize(2)
+        assertThat(engine.modes).containsExactly(TextToSpeech.QUEUE_FLUSH, TextToSpeech.QUEUE_FLUSH)
+    }
+
+    @Test
+    fun aNoticeIsQueuedBehindTheInstructionInsteadOfCuttingIt() {
+        val guidance = guidance()
+        guidance.initialise { _, _ -> }
+        engines.single().completeInit()
+
+        guidance.speak("In 250 metres, turn right onto Carrer Major")
+        guidance.speak("Route recalculated.", SpeechGuidance.Priority.NOTICE)
+
+        val engine = engines.single()
+        assertThat(engine.spoken).containsExactly(
+            "In 250 metres, turn right onto Carrer Major",
+            "Route recalculated.",
+        ).inOrder()
+        assertThat(engine.modes).containsExactly(TextToSpeech.QUEUE_FLUSH, TextToSpeech.QUEUE_ADD).inOrder()
+    }
+
+    @Test
+    fun anInstructionArrivingWhileANoticeWaitsStillFlushes() {
+        val guidance = guidance()
+        guidance.initialise { _, _ -> }
+        engines.single().completeInit()
+
+        guidance.speak("Route recalculated.", SpeechGuidance.Priority.NOTICE)
+        guidance.speak("In 80 metres, turn right onto Carrer Major")
+
+        assertThat(engines.single().modes)
+            .containsExactly(TextToSpeech.QUEUE_ADD, TextToSpeech.QUEUE_FLUSH).inOrder()
+    }
+
+    @Test
+    fun queuedUtterancesGetTheirOwnIds() {
+        val guidance = guidance()
+        guidance.initialise { _, _ -> }
+        engines.single().completeInit()
+
+        guidance.speak("In 250 metres, turn right onto Carrer Major")
+        guidance.speak("Route recalculated.", SpeechGuidance.Priority.NOTICE)
+
+        val ids = engines.single().ids
+        assertThat(ids).hasSize(2)
+        assertThat(ids.toSet()).hasSize(2)
+    }
+
+    @Test
+    fun theRepeatWindowCoversNoticesToo() {
+        val guidance = guidance()
+        guidance.initialise { _, _ -> }
+        engines.single().completeInit()
+
+        guidance.speak("GPS signal restored. Continuing navigation.", SpeechGuidance.Priority.NOTICE)
+        guidance.speak("GPS signal restored. Continuing navigation.", SpeechGuidance.Priority.NOTICE)
+
+        assertThat(engines.single().spoken).hasSize(1)
+    }
+
     private class FakeEngine(
         private val onInit: (Int) -> Unit,
         private val succeed: Boolean,
@@ -175,6 +245,8 @@ class SpeechGuidanceTest {
     ) : TtsEngine {
 
         val spoken = mutableListOf<String>()
+        val modes = mutableListOf<Int>()
+        val ids = mutableListOf<String>()
         var stops = 0
         var shutdowns = 0
 
@@ -193,6 +265,8 @@ class SpeechGuidanceTest {
 
         override fun speak(text: String, queueMode: Int, params: Bundle?, utteranceId: String) {
             spoken += text
+            modes += queueMode
+            ids += utteranceId
         }
 
         override fun stop() {
