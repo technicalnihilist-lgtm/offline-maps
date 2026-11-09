@@ -72,7 +72,16 @@ class NavigationManager(private val locator: ServiceLocator) {
     private var job: Job? = null
     private var tracker: NavigationTracker? = null
     private var announcer: GuidanceAnnouncer? = null
+
+    /**
+     * The engine speaking in the current session, or null when the session runs without voice.
+     *
+     * [sharedSpeech] outlives a session: a [SpeechGuidance] binds the system speech service and
+     * takes hundreds of milliseconds to become ready, so it is built once and reused instead of
+     * being created and shut down on every start (OPTIMIZATION.md F-01).
+     */
     private var speech: SpeechGuidance? = null
+    private var sharedSpeech: SpeechGuidance? = null
     /**
      * Decides when a deviation may be answered with a recalculation: a cooldown, a minimum distance
      * travelled since the last attempt (so a stationary off-route fix does not loop), and an attempt
@@ -81,6 +90,10 @@ class NavigationManager(private val locator: ServiceLocator) {
     private val rerouteGate = RerouteGate()
 
     val speechGuidance: SpeechGuidance? get() = speech
+
+    /** The process-wide speech engine, created on first use. */
+    private fun speechEngine(): SpeechGuidance =
+        sharedSpeech ?: SpeechGuidance(locator.appContext).also { sharedSpeech = it }
 
     /**
      * Calculates a route without starting navigation - used by the route preview.
@@ -131,7 +144,7 @@ class NavigationManager(private val locator: ServiceLocator) {
         )
 
         if (voiceEnabled) {
-            val engine = SpeechGuidance(locator.appContext)
+            val engine = speechEngine()
             speech = engine
             engine.initialise { available, message ->
                 if (!available) {
@@ -260,11 +273,28 @@ class NavigationManager(private val locator: ServiceLocator) {
         locator.setGuidanceActive(false)
         job?.cancel()
         job = null
-        speech?.shutdown()
+        // Only silence this session: the engine itself is kept for the next one (F-01).
+        speech?.stop()
         speech = null
         tracker = null
         announcer = null
         rerouteGate.reset()
+    }
+
+    /**
+     * Shuts the shared speech engine down once nothing is speaking any more.
+     *
+     * Called from the `onDestroy` of both components that keep guidance alive (the activity and the
+     * foreground service), so the engine is released with them instead of living for the whole
+     * process - but only when no session still needs it, which is what lets one engine serve
+     * several navigation sessions instead of being rebuilt on every start (OPTIMIZATION.md F-01).
+     */
+    fun releaseSpeech() {
+        if (_session.value != null) return
+        speech?.stop()
+        speech = null
+        sharedSpeech?.shutdown()
+        sharedSpeech = null
     }
 
     private companion object {

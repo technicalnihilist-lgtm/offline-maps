@@ -41,6 +41,16 @@ class NavigationService : LifecycleService() {
         }
     }
 
+    /**
+     * The service only lives while guidance does, so it is also what releases the shared speech
+     * engine (OPTIMIZATION.md F-01): the engine is created once and reused across sessions, and
+     * shut down here rather than on every session stop.
+     */
+    override fun onDestroy() {
+        (application as OfflineMapsApp).locator.navigationManager.releaseSpeech()
+        super.onDestroy()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         if (intent?.action == ACTION_STOP) {

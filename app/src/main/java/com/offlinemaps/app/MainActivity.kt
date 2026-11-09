@@ -69,6 +69,16 @@ class MainActivity : ComponentActivity() {
             trace.finishStartup()
         }
     }
+
+    /**
+     * The speech engine is shared by every navigation session, so it is released here - with the
+     * screen that owns guidance - rather than on each session stop. It is a no-op while a session
+     * is still running, because the foreground service keeps speaking then (OPTIMIZATION.md F-01).
+     */
+    override fun onDestroy() {
+        locator.navigationManager.releaseSpeech()
+        super.onDestroy()
+    }
 }
 
 @Composable
