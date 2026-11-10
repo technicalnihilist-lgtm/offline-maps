@@ -31,6 +31,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,7 +40,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.app.map.MapController
 import com.offlinemaps.app.nav.NavigationSessionUi
@@ -90,6 +94,26 @@ fun AppScaffold(
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     var showPermissionDialog by remember { mutableStateOf(false) }
+
+    // The explore stream is registered only while this screen is started (OPTIMIZATION.md G-04). A
+    // map in a pocket cannot show a fix, so the GPS radio is released with the screen and comes
+    // back with it. The first sync reads the owner's current state, so a screen composed while it
+    // is stopped does not hold a registration for a screen nobody can see.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        mapViewModel.onScreenVisibilityChanged(
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+        )
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapViewModel.onScreenVisibilityChanged(true)
+                Lifecycle.Event.ON_STOP -> mapViewModel.onScreenVisibilityChanged(false)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Keep the native camera and overlay layers in sync with UI state.
     LaunchedEffect(state.mode, state.quality) {

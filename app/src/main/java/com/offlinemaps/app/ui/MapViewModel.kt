@@ -21,6 +21,7 @@ import com.offlinemaps.core.common.TravelProfile
 import com.offlinemaps.core.data.InstalledRegion
 import com.offlinemaps.core.data.RecentSearch
 import com.offlinemaps.core.data.SavedPlace
+import com.offlinemaps.core.location.ExploreStreamLifetime
 import com.offlinemaps.core.location.exploreFiltered
 import com.offlinemaps.core.map.MapConfig
 import com.offlinemaps.core.map.StyleOptions
@@ -110,6 +111,12 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
     private var lastFix: LocationFix? = null
     private var locationJob: Job? = null
 
+    /**
+     * Whether the explore stream should be registered right now (OPTIMIZATION.md G-04). The request
+     * outlives a backgrounded screen - it is still wanted - but the registration does not.
+     */
+    private val exploreStream = ExploreStreamLifetime()
+
     /** Collapses a burst of keystrokes into one SQLite query (OPTIMIZATION.md D-02). */
     private val searchDebouncer = QueryDebouncer(viewModelScope)
 
@@ -161,6 +168,7 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
     /** Starts streaming position updates. Safe to call repeatedly. */
     fun startLocationUpdates() {
         if (locationJob != null) return
+        exploreStream.onRequested()
         if (!locator.locationSource.hasPermission()) {
             refreshGpsState()
             return
@@ -191,7 +199,31 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
         }
     }
 
+    /** Releases the explore stream for good; a later visibility change does not bring it back. */
     fun stopLocationUpdates() {
+        exploreStream.onReleased()
+        releaseStream()
+    }
+
+    /**
+     * The screen showing the position was started or stopped (OPTIMIZATION.md G-04).
+     *
+     * Explore mode used to keep both providers registered until the view model died, so tapping
+     * "my location" and locking the screen left the radio running with nothing able to display a
+     * fix. The registration now ends with the screen and returns with it; the request, the cadence
+     * and the filter are untouched, and the last known fix is re-emitted when the stream comes back
+     * so the map does not show a stale puck while the first new fix arrives.
+     */
+    fun onScreenVisibilityChanged(visible: Boolean) {
+        when (exploreStream.onVisibilityChanged(visible)) {
+            ExploreStreamLifetime.Action.START -> startLocationUpdates()
+            ExploreStreamLifetime.Action.STOP -> releaseStream()
+            ExploreStreamLifetime.Action.NONE -> Unit
+        }
+    }
+
+    /** Drops the registration only, keeping the request, so the stream can come back. */
+    private fun releaseStream() {
         locationJob?.cancel()
         locationJob = null
     }
