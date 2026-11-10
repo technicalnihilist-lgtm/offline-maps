@@ -79,7 +79,16 @@ class SpeechGuidance internal constructor(
 
     private fun createEngineLocked() {
         val box = InitBox()
-        val created = engineFactory(appContext) { status -> onInitCallback(box, status) }
+        // Building the engine binds a system service, and on a device with no speech engine - or
+        // with a vendor engine that throws from its own constructor - that call fails loudly.
+        // Voice is optional, so the failure is reported instead of thrown: the caller's session
+        // continues silently rather than dying on the way to the first instruction (F-05).
+        val created = try {
+            engineFactory(appContext) { status -> onInitCallback(box, status) }
+        } catch (t: Throwable) {
+            failLocked()
+            return
+        }
         box.engine = created
         engine = created
         // An engine that reported before the factory returned to us is answered now.
@@ -108,16 +117,37 @@ class SpeechGuidance internal constructor(
         if (initDelivered) return
         initDelivered = true
         val current = engine
-        if (status == TextToSpeech.SUCCESS && current != null) {
-            current.setOnUtteranceProgressListener(progressListener)
-            ready = true
-            failed = false
-            initMessage = applyLanguage(current, languageTag)
+        // An engine can report SUCCESS and still throw from a call it does not really support, so
+        // configuring it is guarded too: a half-configured engine is an unavailable one (F-05).
+        val setup = if (status == TextToSpeech.SUCCESS && current != null) {
+            runCatching {
+                current.setOnUtteranceProgressListener(progressListener)
+                applyLanguage(current, languageTag)
+            }
         } else {
-            ready = false
-            failed = true
-            initMessage = UNAVAILABLE
+            null
         }
+        ready = setup?.isSuccess == true
+        failed = !ready
+        initMessage = when {
+            setup == null -> UNAVAILABLE
+            setup.isSuccess -> setup.getOrNull()
+            else -> UNAVAILABLE
+        }
+        answerPendingLocked()
+    }
+
+    /** Marks the engine as unavailable and answers everyone waiting on it, without throwing. */
+    private fun failLocked() {
+        engine = null
+        ready = false
+        failed = true
+        initMessage = UNAVAILABLE
+        initDelivered = true
+        answerPendingLocked()
+    }
+
+    private fun answerPendingLocked() {
         val waiting = pending.toList()
         pending.clear()
         waiting.forEach { it(ready, initMessage) }
@@ -126,13 +156,14 @@ class SpeechGuidance internal constructor(
     /** Voices installed on the device. Offline voices are flagged so the UI can label them. */
     fun availableVoices(): List<VoiceInfo> = synchronized(lock) {
         val current = engine ?: return@synchronized emptyList<VoiceInfo>()
-        current.voices()
+        runCatching { current.voices() }.getOrDefault(emptyList())
     }
 
     fun setLanguage(tag: String?): String? = synchronized(lock) {
         languageTag = tag
-        val current = engine ?: return@synchronized "Speech engine not ready"
-        applyLanguage(current, tag)
+        val current = engine ?: return@synchronized NOT_READY
+        // A broken engine answers this from the settings screen, which must not crash either.
+        runCatching { applyLanguage(current, tag) }.getOrElse { NOT_READY }
     }
 
     private fun applyLanguage(current: TtsEngine, tag: String?): String? {
@@ -192,7 +223,8 @@ class SpeechGuidance internal constructor(
             // Ids must stay unique even for two utterances handed over inside the same millisecond:
             // with QUEUE_ADD they can both be pending, and a shared id would make the progress
             // callbacks unable to tell them apart.
-            current.speak(text, queueMode, params, "nav-${++utteranceSeq}")
+            // An utterance the engine refuses is dropped, not allowed to unwind the guidance loop.
+            runCatching { current.speak(text, queueMode, params, "nav-${++utteranceSeq}") }
         }
     }
 
@@ -239,6 +271,7 @@ class SpeechGuidance internal constructor(
 
     private companion object {
         const val UNAVAILABLE = "Text-to-speech is not available on this device"
+        const val NOT_READY = "Speech engine not ready"
         const val REPEAT_WINDOW_MS = 6_000L
     }
 }

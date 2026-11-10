@@ -35,10 +35,16 @@ class SpeechGuidanceTest {
         engines.clear()
     }
 
-    private fun guidance(succeed: Boolean = true, reportDuringConstruction: Boolean = false): SpeechGuidance =
+    private fun guidance(
+        succeed: Boolean = true,
+        reportDuringConstruction: Boolean = false,
+        throwsWhenConfiguring: Boolean = false,
+        throwsOnSpeak: Boolean = false,
+    ): SpeechGuidance =
         SpeechGuidance(context) { _, onInit ->
             factoryCalls++
-            FakeEngine(onInit, succeed, reportDuringConstruction).also { engines += it }
+            FakeEngine(onInit, succeed, reportDuringConstruction, throwsWhenConfiguring, throwsOnSpeak)
+                .also { engines += it }
         }
 
     @Test
@@ -238,10 +244,66 @@ class SpeechGuidanceTest {
         assertThat(engines.single().spoken).hasSize(1)
     }
 
+    @Test
+    fun anEngineThatCannotBeBuiltIsReportedInsteadOfThrown() {
+        var factoryCallsWithFailure = 0
+        val guidance = SpeechGuidance(context) { _, _ ->
+            factoryCallsWithFailure++
+            throw IllegalStateException("no speech engine installed")
+        }
+        val answers = mutableListOf<Pair<Boolean, String?>>()
+
+        guidance.initialise { available, message -> answers += available to message }
+
+        assertThat(answers.map { it.first }).containsExactly(false)
+        assertThat(answers.single().second).isNotEmpty()
+        assertThat(guidance.isReady).isFalse()
+        assertThat(guidance.availableVoices()).isEmpty()
+
+        // Voice is optional: nothing the guidance loop does afterwards may throw.
+        guidance.speak("Turn left")
+        guidance.stop()
+        guidance.shutdown()
+
+        // shutdown releases a failed engine, so the next session is allowed to try again.
+        guidance.initialise { available, _ -> answers += available to null }
+
+        assertThat(answers.map { it.first }).containsExactly(false, false).inOrder()
+        assertThat(factoryCallsWithFailure).isEqualTo(2)
+    }
+
+    @Test
+    fun anEngineThatReportsSuccessButThrowsWhileBeingConfiguredIsUnavailable() {
+        val guidance = guidance(throwsWhenConfiguring = true)
+        val answers = mutableListOf<Boolean>()
+
+        guidance.initialise { available, _ -> answers += available }
+        engines.single().completeInit()
+
+        assertThat(answers).containsExactly(false)
+        assertThat(guidance.isReady).isFalse()
+
+        guidance.speak("Turn left")
+        assertThat(engines.single().spoken).isEmpty()
+    }
+
+    @Test
+    fun anUtteranceTheEngineRefusesDoesNotEscapeTheGuidanceLoop() {
+        val guidance = guidance(throwsOnSpeak = true)
+        guidance.initialise { _, _ -> }
+        engines.single().completeInit()
+
+        guidance.speak("Turn left")
+
+        assertThat(guidance.isReady).isTrue()
+    }
+
     private class FakeEngine(
         private val onInit: (Int) -> Unit,
         private val succeed: Boolean,
         reportDuringConstruction: Boolean,
+        private val throwsWhenConfiguring: Boolean = false,
+        private val throwsOnSpeak: Boolean = false,
     ) : TtsEngine {
 
         val spoken = mutableListOf<String>()
@@ -256,7 +318,9 @@ class SpeechGuidanceTest {
 
         fun completeInit() = onInit(if (succeed) TextToSpeech.SUCCESS else TextToSpeech.ERROR)
 
-        override fun setOnUtteranceProgressListener(listener: UtteranceProgressListener) = Unit
+        override fun setOnUtteranceProgressListener(listener: UtteranceProgressListener) {
+            if (throwsWhenConfiguring) throw IllegalStateException("engine is gone")
+        }
 
         override fun voices(): List<SpeechGuidance.VoiceInfo> =
             listOf(SpeechGuidance.VoiceInfo("offline-en", "en-IN", true))
@@ -264,6 +328,7 @@ class SpeechGuidanceTest {
         override fun setLanguage(locale: Locale): Int = TextToSpeech.LANG_AVAILABLE
 
         override fun speak(text: String, queueMode: Int, params: Bundle?, utteranceId: String) {
+            if (throwsOnSpeak) throw IllegalStateException("engine is gone")
             spoken += text
             modes += queueMode
             ids += utteranceId
