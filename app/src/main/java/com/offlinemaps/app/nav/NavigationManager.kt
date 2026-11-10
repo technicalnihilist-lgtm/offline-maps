@@ -8,6 +8,7 @@ import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.LocationFix
 import com.offlinemaps.core.common.PlaceResult
 import com.offlinemaps.core.common.TravelProfile
+import com.offlinemaps.core.location.SignalLossWatch
 import com.offlinemaps.core.routing.GuidanceAnnouncer
 import com.offlinemaps.core.routing.InstructionMapper
 import com.offlinemaps.core.routing.NavigationState
@@ -19,11 +20,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -39,6 +43,12 @@ data class NavigationSessionUi(
     val voiceEnabled: Boolean,
     val muted: Boolean,
     val message: String? = null,
+    /**
+     * The position stream has been lost: every provider went away, or no fix has arrived for a
+     * while. The last known position and the last [state] are deliberately kept as they are - the
+     * session goes on showing where the driver was rather than guessing (OPTIMIZATION.md G-03).
+     */
+    val signalLost: Boolean = false,
 ) {
     val nextInstruction: String
         get() = (state?.nextManeuver ?: plan.maneuvers.firstOrNull())?.text ?: "Continue"
@@ -89,6 +99,13 @@ class NavigationManager(private val locator: ServiceLocator) {
      */
     private val rerouteGate = RerouteGate()
 
+    /**
+     * Notices a position stream that has stopped, either because the platform disabled the provider
+     * mid-drive or because no fix has arrived for a while (OPTIMIZATION.md G-03).
+     */
+    @Volatile
+    private var signalWatch: SignalLossWatch? = null
+
     val speechGuidance: SpeechGuidance? get() = speech
 
     /** The process-wide speech engine, created on first use. */
@@ -120,7 +137,8 @@ class NavigationManager(private val locator: ServiceLocator) {
         origin: GeoPoint? = null,
         voiceEnabled: Boolean = true,
     ): Result<Unit> {
-        val from = origin ?: locator.locationSource.lastKnown()?.point
+        val seeded = locator.locationSource.lastKnown()
+        val from = origin ?: seeded?.point
             ?: return Result.failure(
                 IllegalStateException("Waiting for a GPS fix - move to an open area and try again."),
             )
@@ -136,6 +154,12 @@ class NavigationManager(private val locator: ServiceLocator) {
         }
 
         stopInternal()
+
+        // Seeded with the fix the session starts from, so a stream that never delivers its first
+        // update is still noticed after the stale window rather than waiting for ever.
+        val watch = SignalLossWatch()
+        watch.onFix(seeded?.timestampMillis ?: System.currentTimeMillis())
+        signalWatch = watch
 
         tracker = NavigationTracker(plan)
         announcer = GuidanceAnnouncer(
@@ -166,27 +190,83 @@ class NavigationManager(private val locator: ServiceLocator) {
             rerouting = false,
             voiceEnabled = voiceEnabled,
             muted = !voiceEnabled,
+            signalLost = false,
         )
 
         locator.setGuidanceActive(true)
         job = scope.launch {
-            locator.locationSource.updates(minTimeMs = 1_000L, minDistanceMeters = 2f)
-                .catch { e ->
-                    Log.w(TAG, "location stream failed", e)
-                    _session.update { it?.copy(message = "GPS updates stopped: ${e.message}") }
-                }
-                .collect { fix -> onFix(fix) }
+            val poll = launch { pollSignalLoss() }
+            try {
+                locator.locationSource.updates(
+                    minTimeMs = 1_000L,
+                    minDistanceMeters = 2f,
+                    onProviderState = ::onProviderState,
+                )
+                    .catch { e ->
+                        Log.w(TAG, "location stream failed", e)
+                        _session.update { it?.copy(message = "GPS updates stopped: ${e.message}") }
+                    }
+                    .collect { fix -> onFix(fix) }
+            } finally {
+                poll.cancel()
+            }
         }
         return Result.success(Unit)
     }
 
+    /**
+     * A provider went away or came back. Both are only recorded: the registration survives a
+     * provider being switched off, so nothing has to be re-requested when it returns, and nothing
+     * is torn down while it is away - the session keeps its last known position and the panel says
+     * the signal is gone (OPTIMIZATION.md G-03).
+     */
+    private fun onProviderState(provider: String, enabled: Boolean) {
+        val watch = signalWatch ?: return
+        if (enabled) watch.onProviderEnabled(provider) else watch.onProviderDisabled(provider)
+        Log.i(TAG, "provider $provider enabled=$enabled")
+        if (watch.isLost(System.currentTimeMillis())) markSignalLost()
+    }
+
+    /**
+     * Watches the clock, because a stream that dies silently never calls back: nothing arrives to
+     * tell the session that nothing is arriving. Cheap - one wake every [SIGNAL_POLL_MILLIS] - and
+     * the write is skipped unless the flag actually changes, so a quiet session does not recompose
+     * anything (OPTIMIZATION.md G-03).
+     */
+    private suspend fun pollSignalLoss() {
+        while (currentCoroutineContext().isActive) {
+            delay(SIGNAL_POLL_MILLIS)
+            val watch = signalWatch ?: return
+            if (watch.isLost(System.currentTimeMillis())) markSignalLost()
+        }
+    }
+
+    private fun markSignalLost() {
+        _session.update { session ->
+            when {
+                session == null -> null
+                session.signalLost && !session.gpsAvailable -> session
+                else -> session.copy(gpsAvailable = false, signalLost = true)
+            }
+        }
+    }
+
     private fun onFix(fix: LocationFix) {
         val currentTracker = tracker ?: return
+        // Recorded before the tracker sees the fix: a fix re-emitted by `onProviderDisabled` is the
+        // last *known* one, so it refreshes nothing and must not make a lost stream look alive.
+        val fresh = signalWatch?.onFix(fix.timestampMillis) ?: true
         // A fix older than the one already followed is ignored whole: no state update, no
         // announcement, and no reroute decided from a position the driver has already left behind.
         val state = currentTracker.onLocation(fix) ?: return
         _session.update { session ->
-            session?.copy(state = state, gpsAvailable = true, gpsWeak = state.gpsSignalWeak, rerouting = false)
+            session?.copy(
+                state = state,
+                gpsAvailable = true,
+                gpsWeak = state.gpsSignalWeak,
+                rerouting = false,
+                signalLost = session.signalLost && !fresh,
+            )
         }
         announcer?.onState(state)
 
@@ -215,6 +295,7 @@ class NavigationManager(private val locator: ServiceLocator) {
         job = null
         tracker = null
         announcer = null
+        signalWatch = null
         rerouteGate.reset()
         // No reroute can follow, so a memory trim may now close the routing graph.
         locator.setGuidanceActive(false)
@@ -280,6 +361,7 @@ class NavigationManager(private val locator: ServiceLocator) {
         speech = null
         tracker = null
         announcer = null
+        signalWatch = null
         rerouteGate.reset()
     }
 
@@ -301,5 +383,8 @@ class NavigationManager(private val locator: ServiceLocator) {
 
     private companion object {
         const val TAG = "NavigationManager"
+
+        /** How often a silent stream is checked against the clock. */
+        const val SIGNAL_POLL_MILLIS = 5_000L
     }
 }

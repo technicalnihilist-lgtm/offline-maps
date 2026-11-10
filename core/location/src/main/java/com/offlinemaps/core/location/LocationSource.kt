@@ -66,6 +66,7 @@ class LocationSource(private val context: Context) {
     fun updates(
         minTimeMs: Long = 2_000L,
         minDistanceMeters: Float = 5f,
+        onProviderState: ((provider: String, enabled: Boolean) -> Unit)? = null,
     ): Flow<LocationFix> = callbackFlow {
         val lm = manager
         if (lm == null || !hasPermission()) {
@@ -81,21 +82,33 @@ class LocationSource(private val context: Context) {
             @Suppress("DEPRECATION")
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
 
-            override fun onProviderEnabled(provider: String) = Unit
+            override fun onProviderEnabled(provider: String) {
+                // Reported before anything else: a session following this stream has to know the
+                // stream may come back (OPTIMIZATION.md G-03).
+                onProviderState?.invoke(provider, true)
+            }
 
             override fun onProviderDisabled(provider: String) {
                 // Re-emit the last known position so the UI can keep showing it while GPS recovers.
-                val last = lastKnown() ?: return
-                trySend(last)
+                val last = lastKnown()
+                if (last != null) trySend(last)
+                // Reported after the re-emit, so the caller's view of the stream is settled by the
+                // fix it already had before it learns the provider went away.
+                onProviderState?.invoke(provider, false)
             }
         }
 
         val registration = Registration(lm, listener)
         try {
-            registration.request(LocationManager.GPS_PROVIDER, minTimeMs, minDistanceMeters)
-            registration.request(
-                LocationManager.NETWORK_PROVIDER, minTimeMs * 3, minDistanceMeters * 4,
-            )
+            if (registration.request(LocationManager.GPS_PROVIDER, minTimeMs, minDistanceMeters)) {
+                onProviderState?.invoke(LocationManager.GPS_PROVIDER, true)
+            }
+            if (registration.request(
+                    LocationManager.NETWORK_PROVIDER, minTimeMs * 3, minDistanceMeters * 4,
+                )
+            ) {
+                onProviderState?.invoke(LocationManager.NETWORK_PROVIDER, true)
+            }
             awaitClose { registration.release() }
         } finally {
             // Also covers an exit that never reached awaitClose, so a collector that leaves cannot
@@ -126,17 +139,21 @@ private class Registration(
     private var requested = 0
     private var released = false
 
-    /** Registers [provider], unless it is disabled or the platform refuses the request. */
-    fun request(provider: String, minTimeMs: Long, minDistanceMeters: Float) {
-        if (released) return
+    /**
+     * Registers [provider], unless it is disabled or the platform refuses the request; returns true
+     * when the platform accepted the request.
+     */
+    fun request(provider: String, minTimeMs: Long, minDistanceMeters: Float): Boolean {
+        if (released) return false
         val enabled = runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
-        if (!enabled) return
+        if (!enabled) return false
         val registered = runCatching {
             manager.requestLocationUpdates(
                 provider, minTimeMs, minDistanceMeters, listener, Looper.getMainLooper(),
             )
         }.isSuccess
         if (registered) requested++
+        return registered
     }
 
     /** Removes this collector's updates; later calls do nothing. */

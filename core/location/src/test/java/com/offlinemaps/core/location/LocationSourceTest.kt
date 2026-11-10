@@ -135,4 +135,44 @@ class LocationSourceTest {
         assertThat(outcome.exceptionOrNull()).isInstanceOf(IllegalStateException::class.java)
         assertThat(registered()).isEmpty()
     }
+
+    @Test
+    fun `the provider state callback reports what was registered and what went away`() {
+        val events = mutableListOf<Pair<String, Boolean>>()
+        val job = scope.launch {
+            source.updates(onProviderState = { provider, enabled -> events.add(provider to enabled) })
+                .collect { }
+        }
+
+        assertThat(events).containsExactly(
+            LocationManager.GPS_PROVIDER to true,
+            LocationManager.NETWORK_PROVIDER to true,
+        )
+
+        // The platform switches the provider off mid-drive and calls the listener it registered.
+        registered(LocationManager.GPS_PROVIDER).single()
+            .onProviderDisabled(LocationManager.GPS_PROVIDER)
+        assertThat(events.last()).isEqualTo(LocationManager.GPS_PROVIDER to false)
+
+        registered(LocationManager.GPS_PROVIDER).single()
+            .onProviderEnabled(LocationManager.GPS_PROVIDER)
+        assertThat(events.last()).isEqualTo(LocationManager.GPS_PROVIDER to true)
+
+        job.cancel()
+        assertThat(registered()).isEmpty()
+    }
+
+    @Test
+    fun `a provider that was disabled at registration is never reported as live`() {
+        shadowOf(manager).setProviderEnabled(LocationManager.NETWORK_PROVIDER, false)
+        val events = mutableListOf<Pair<String, Boolean>>()
+
+        val job = scope.launch {
+            source.updates(onProviderState = { provider, enabled -> events.add(provider to enabled) })
+                .collect { }
+        }
+
+        assertThat(events).containsExactly(LocationManager.GPS_PROVIDER to true)
+        job.cancel()
+    }
 }

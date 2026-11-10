@@ -342,7 +342,7 @@ fun NavigationTurnCard(
                 TextButton(onClick = onMuteToggle) { Text(if (session.muted) "Muted" else "Voice") }
                 TextButton(onClick = onRepeat) { Text("Repeat") }
             }
-            if (session.gpsWeak) {
+            if (session.gpsWeak || session.signalLost) {
                 Spacer(Modifier.height(6.dp))
                 StatusChip(text = "Weak GPS signal", tone = StatusTone.WARNING)
             }
