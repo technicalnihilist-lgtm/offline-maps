@@ -21,6 +21,7 @@ import com.offlinemaps.core.common.TravelProfile
 import com.offlinemaps.core.data.InstalledRegion
 import com.offlinemaps.core.data.RecentSearch
 import com.offlinemaps.core.data.SavedPlace
+import com.offlinemaps.core.location.exploreFiltered
 import com.offlinemaps.core.map.MapConfig
 import com.offlinemaps.core.map.StyleOptions
 import com.offlinemaps.core.routing.RouteResult
@@ -30,6 +31,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -168,17 +170,24 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
             _state.update { it.copy(userLocation = fix.point, userAccuracy = fix.accuracyMeters, gpsEnabled = true) }
         }
         locationJob = viewModelScope.launch {
-            locator.locationSource.updates(minTimeMs = 4_000L, minDistanceMeters = 8f).collect { fix ->
-                lastFix = fix
-                _state.update {
-                    it.copy(
-                        userLocation = fix.point,
-                        userAccuracy = fix.accuracyMeters,
-                        hasLocationPermission = true,
-                        gpsEnabled = true,
-                    )
+            // The platform's distance filter is advisory, and the two providers plus the
+            // last-known re-emit deliver the same instant more than once; in explore mode each fix
+            // rewrote the screen state for a position the user cannot tell apart from the one
+            // already there. `lastFix` still tracks every fix, so a route origin stays current;
+            // only the published state is gated (OPTIMIZATION.md G-02).
+            locator.locationSource.updates(minTimeMs = 4_000L, minDistanceMeters = 8f)
+                .onEach { lastFix = it }
+                .exploreFiltered()
+                .collect { fix ->
+                    _state.update {
+                        it.copy(
+                            userLocation = fix.point,
+                            userAccuracy = fix.accuracyMeters,
+                            hasLocationPermission = true,
+                            gpsEnabled = true,
+                        )
+                    }
                 }
-            }
         }
     }
 
