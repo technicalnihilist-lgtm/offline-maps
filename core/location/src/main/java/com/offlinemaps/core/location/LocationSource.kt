@@ -58,6 +58,10 @@ class LocationSource(private val context: Context) {
     /**
      * Continuous position updates. [minTimeMs] and [minDistanceMeters] throttle delivery - while
      * navigating we use ~1 s / 2 m, while simply exploring the map we use ~4 s / 8 m.
+     *
+     * Every collector owns its own registration and takes it back when it leaves, so the map screen
+     * and a navigation session can stream at their own cadence at the same time and neither one
+     * inherits the other's request (OPTIMIZATION.md G-01).
      */
     fun updates(
         minTimeMs: Long = 2_000L,
@@ -86,21 +90,64 @@ class LocationSource(private val context: Context) {
             }
         }
 
-        runCatching {
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER, minTimeMs, minDistanceMeters, listener, Looper.getMainLooper(),
-                )
-            }
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER, minTimeMs * 3, minDistanceMeters * 4, listener, Looper.getMainLooper(),
-                )
-            }
+        val registration = Registration(lm, listener)
+        try {
+            registration.request(LocationManager.GPS_PROVIDER, minTimeMs, minDistanceMeters)
+            registration.request(
+                LocationManager.NETWORK_PROVIDER, minTimeMs * 3, minDistanceMeters * 4,
+            )
+            awaitClose { registration.release() }
+        } finally {
+            // Also covers an exit that never reached awaitClose, so a collector that leaves cannot
+            // leave the radio running behind it.
+            registration.release()
         }
-
-        awaitClose { runCatching { lm.removeUpdates(listener) } }
     }.conflate()
+}
+
+/**
+ * The updates one collector asked [LocationManager] for, and the single place they are taken back.
+ *
+ * What has to be reliable is the removal: a listener left behind keeps the provider and its
+ * main-looper callback alive long after the screen that wanted the fix is gone. Two things were
+ * making that fragile. The two provider requests shared one `runCatching`, so a provider that
+ * refused the request - a coarse-only permission asking for the GPS provider throws on older
+ * releases, and an OEM build can throw for a provider it does not have - aborted the block and took
+ * the *other* provider's request with it, leaving the collector either silent or registered with no
+ * record of what it had asked for. And removal hung on `awaitClose` alone, with nothing covering an
+ * exit that never got there. So each provider is now requested on its own and counted, and
+ * [release] is idempotent: the close handler and the `finally` can both call it without removing
+ * anything twice or leaving a registration behind.
+ */
+private class Registration(
+    private val manager: LocationManager,
+    private val listener: LocationListener,
+) {
+    private var requested = 0
+    private var released = false
+
+    /** Registers [provider], unless it is disabled or the platform refuses the request. */
+    fun request(provider: String, minTimeMs: Long, minDistanceMeters: Float) {
+        if (released) return
+        val enabled = runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
+        if (!enabled) return
+        val registered = runCatching {
+            manager.requestLocationUpdates(
+                provider, minTimeMs, minDistanceMeters, listener, Looper.getMainLooper(),
+            )
+        }.isSuccess
+        if (registered) requested++
+    }
+
+    /** Removes this collector's updates; later calls do nothing. */
+    @Synchronized
+    fun release() {
+        if (released) return
+        released = true
+        if (requested == 0) return
+        requested = 0
+        runCatching { manager.removeUpdates(listener) }
+    }
 }
 
 private fun Location.toFix(): LocationFix = LocationFix(
