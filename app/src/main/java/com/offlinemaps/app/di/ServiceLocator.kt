@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * cold start only pays for the services the first screen actually asks for. Keep it that way —
  * nothing here may be initialised eagerly from `Application.onCreate`.
  */
-class ServiceLocator(context: Context) {
+class ServiceLocator(anyContext: Context) {
 
     /**
      * The only context this locator - and so every singleton built from it - may keep.
@@ -56,8 +56,13 @@ class ServiceLocator(context: Context) {
      * its view tree and its window for the life of the app; the services below (search index,
      * offline regions, location source, settings) all store what they are given, so the coercion has
      * to happen here, once, at the single place they are built.
+     *
+     * The parameter is deliberately not called `context`: a constructor parameter is in scope inside
+     * the `by lazy` initialisers below and would shadow the property of that name, handing every
+     * service the raw context this coercion exists to replace. That is exactly the leak the
+     * retention test in `app/src/test` now catches.
      */
-    val appContext: Context = context.applicationContext ?: context
+    val appContext: Context = anyContext.applicationContext ?: anyContext
 
     private val context: Context get() = appContext
 
