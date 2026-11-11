@@ -51,22 +51,29 @@ class ServiceLocatorContextRetentionTest {
 
         val retained = retainedContexts(locator)
 
-        assertThat(retained).isNotEmpty()
-        assertThat(retained.filter { it === activity }).isEmpty()
-        retained.forEach { assertThat(it).isSameInstanceAs(activity.applicationContext) }
+        assertThat(retained.map { it.owner }).isNotEmpty()
+        assertThat(retained.filter { it.context === activity }.map { it.owner }).isEmpty()
+        assertThat(retained.filter { it.context !== activity.applicationContext }.map { "${it.owner}=${it.context.javaClass.name}" })
+            .isEmpty()
     }
 
     private fun activity(): Activity = Robolectric.buildActivity(Activity::class.java).setup().get()
 
+    private data class Retained(val owner: String, val context: Context)
+
     /** Every [Context] held by an already-initialised lazy member of [locator]. */
-    private fun retainedContexts(locator: ServiceLocator): List<Context> {
-        val retained = mutableListOf<Context>()
+    private fun retainedContexts(locator: ServiceLocator): List<Retained> {
+        val retained = mutableListOf<Retained>()
         lazyFields(locator)
             .map { it.get(locator) as Lazy<*> }
             .filter { it.isInitialized() }
             .forEach { lazyMember ->
                 val instance = lazyMember.value ?: return@forEach
-                contextFields(instance).mapNotNullTo(retained) { it.get(instance) as? Context }
+                contextFields(instance).forEach { field ->
+                    (field.get(instance) as? Context)?.let { context ->
+                        retained += Retained("${instance.javaClass.simpleName}.${field.name}", context)
+                    }
+                }
             }
         return retained
     }
