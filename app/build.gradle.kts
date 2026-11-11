@@ -13,8 +13,8 @@ android {
         applicationId = "com.offlinemaps.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 58
-        versionName = "1.0.57"
+        versionCode = 59
+        versionName = "1.0.58"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
