@@ -35,10 +35,20 @@ interface SavedPlaceDao {
 @Dao
 interface RecentSearchDao {
     @Query("SELECT * FROM recent_searches ORDER BY used_at DESC LIMIT :limit")
-    fun observeRecent(limit: Int = 20): Flow<List<RecentSearchEntity>>
+    fun observeRecent(limit: Int = RecentSearchLimits.VISIBLE): Flow<List<RecentSearchEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(search: RecentSearchEntity)
+
+    /**
+     * Drops everything but the newest [keep] rows. Ties on `used_at` are broken by `id`, so the row
+     * just written (highest id) always survives.
+     */
+    @Query(
+        "DELETE FROM recent_searches WHERE id NOT IN " +
+            "(SELECT id FROM recent_searches ORDER BY used_at DESC, id DESC LIMIT :keep)",
+    )
+    suspend fun pruneTo(keep: Int)
 
     @Query("DELETE FROM recent_searches")
     suspend fun deleteAll()

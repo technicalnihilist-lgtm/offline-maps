@@ -58,8 +58,11 @@ internal fun SavedPlace.toEntity() = SavedPlaceEntity(
     createdAt = createdAt,
 )
 
-class RecentSearchRepository(private val dao: RecentSearchDao) {
-    fun observe(limit: Int = 20): Flow<List<RecentSearch>> = dao.observeRecent(limit).map { rows ->
+class RecentSearchRepository(
+    private val dao: RecentSearchDao,
+    private val storedLimit: Int = RecentSearchLimits.STORED,
+) {
+    fun observe(limit: Int = RecentSearchLimits.VISIBLE): Flow<List<RecentSearch>> = dao.observeRecent(limit).map { rows ->
         rows.map { RecentSearch(it.query, it.name, GeoPoint(it.latitude, it.longitude), it.usedAt) }
     }
 
@@ -73,6 +76,9 @@ class RecentSearchRepository(private val dao: RecentSearchDao) {
                 longitude = point.longitude,
             ),
         )
+        // Keep the store no larger than the list the UI can show, so it stops growing for the life
+        // of the install. Older rows are only ever invisible history, never something rendered.
+        dao.pruneTo(storedLimit)
     }
 
     suspend fun clear() = dao.deleteAll()

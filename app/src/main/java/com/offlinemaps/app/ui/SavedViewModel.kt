@@ -28,7 +28,7 @@ class SavedViewModel(private val locator: ServiceLocator) : ViewModel() {
             locator.savedPlaces.observe().collect { places -> _state.value = _state.value.copy(places = places) }
         }
         viewModelScope.launch {
-            locator.recentSearches.observe(20).collect { recent -> _state.value = _state.value.copy(recent = recent) }
+            locator.recentSearches.observe().collect { recent -> _state.value = _state.value.copy(recent = recent) }
         }
     }
 
