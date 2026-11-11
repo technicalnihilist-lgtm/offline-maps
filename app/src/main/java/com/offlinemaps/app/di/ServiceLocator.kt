@@ -46,7 +46,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  * cold start only pays for the services the first screen actually asks for. Keep it that way —
  * nothing here may be initialised eagerly from `Application.onCreate`.
  */
-class ServiceLocator(val appContext: Context) {
+class ServiceLocator(context: Context) {
+
+    /**
+     * The only context this locator - and so every singleton built from it - may keep.
+     *
+     * Coerced to the application context on the way in (OPTIMIZATION.md H-01). The locator lives as
+     * long as the process, so a caller that handed it an Activity would otherwise pin that screen,
+     * its view tree and its window for the life of the app; the services below (search index,
+     * offline regions, location source, settings) all store what they are given, so the coercion has
+     * to happen here, once, at the single place they are built.
+     */
+    val appContext: Context = context.applicationContext ?: context
 
     private val context: Context get() = appContext
 
