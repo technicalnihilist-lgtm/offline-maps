@@ -14,7 +14,9 @@ import com.offlinemaps.core.data.SavedPlacesRepository
 import com.offlinemaps.core.data.SettingsStore
 import com.offlinemaps.core.location.LocationSource
 import com.offlinemaps.core.map.MapConfig
+import com.offlinemaps.core.map.MapStyleFactory
 import com.offlinemaps.core.map.OfflineRegionController
+import com.offlinemaps.core.map.StyleCacheMemoryPolicy
 import com.offlinemaps.core.offline.AndroidNetworkStateProvider
 import com.offlinemaps.core.offline.AndroidStorageProbe
 import com.offlinemaps.core.offline.DownloadEntry
@@ -240,9 +242,17 @@ class ServiceLocator(anyContext: Context) {
      * is judged by [RoutingMemoryPolicy], so only the levels that mean real pressure (or "no longer
      * visible") free the graph. It is reloaded lazily by the engine, so this is safe to do at any
      * time - the next route reads it back from disk.
+     *
+     * The same signal releases the generated style documents (OPTIMIZATION.md H-02), judged
+     * separately by [StyleCacheMemoryPolicy] because they are rebuilt on the main thread and so
+     * are not worth dropping while the app is merely in the background. Everything else this
+     * locator holds is either cheap or not ours to free: the search index's cursors are all
+     * `.use`-scoped inside [SearchIndex], so no cursor outlives its query, and the tile bitmaps
+     * belong to MapLibre, which trims its own caches from the same callbacks.
      */
     fun onTrimMemory(level: Int) {
         if (RoutingMemoryPolicy.shouldRelease(level)) releaseRoutingGraph()
+        if (StyleCacheMemoryPolicy.shouldRelease(level)) MapStyleFactory.releaseCacheForMemoryTrim()
     }
 
     private fun releaseRoutingGraph() {

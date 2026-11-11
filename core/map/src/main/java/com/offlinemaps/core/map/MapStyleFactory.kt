@@ -136,6 +136,19 @@ object MapStyleFactory {
         cacheMisses.set(0)
     }
 
+    /**
+     * Gives the cached documents back to the system on a memory trim (OPTIMIZATION.md H-02).
+     *
+     * The counters are deliberately left alone: they describe how the cache has behaved over the
+     * life of the process, and a trim is not a cache reset. Nothing else is released here - the
+     * documents are the only thing this object holds - and a dropped document is rebuilt by the
+     * next [buildJson] for the same options, so a trim can cost a few milliseconds later but can
+     * never serve a stale style or change what is drawn.
+     */
+    fun releaseCacheForMemoryTrim() {
+        synchronized(cacheLock) { styleCache.clear() }
+    }
+
     /** The uncached generator. Pure: same options in, same document out. */
     private fun render(options: StyleOptions): String {
         val palette = if (options.theme == MapTheme.DARK) DARK else LIGHT
