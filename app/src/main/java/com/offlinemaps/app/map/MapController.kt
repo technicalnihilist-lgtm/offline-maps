@@ -8,6 +8,7 @@ import com.offlinemaps.core.map.CameraTarget
 import com.offlinemaps.core.map.MapStyleFactory
 import com.offlinemaps.core.map.OverlayLayerPlan
 import com.offlinemaps.core.map.RouteLineSimplifier
+import com.offlinemaps.core.map.StyleSwapGate
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdate
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -41,6 +42,9 @@ data class MapCameraState(
 class MapController(private val map: MapLibreMap) {
 
     private var style: Style? = null
+
+    /** Which rebuild the [style] reference belongs to, so a superseded callback attaches nothing. */
+    private val styleSwaps = StyleSwapGate()
 
     /** What was last pushed to each overlay source, so unchanged geometry is not re-serialised. */
     private val payloads = OverlayPayloadTracker()
@@ -76,9 +80,30 @@ class MapController(private val map: MapLibreMap) {
     var overlayLayersAdded: Int = 0
         private set
 
-    fun onStyleLoaded(style: Style) {
+    /**
+     * Takes ownership of the style that just finished loading and gives it the overlays.
+     *
+     * Called only from the callback of a rebuild whose token is still the pending one (see
+     * [StyleSwapGate]); everything that was known about the previous style was already dropped by
+     * [forgetStyle] when the rebuild was issued.
+     */
+    private fun adoptStyle(style: Style) {
         this.style = style
-        // The overlay sources are (re)created empty below, so nothing is cached for them yet.
+        ensureOverlayLayers(style)
+    }
+
+    /**
+     * Drops the style this controller was writing to, and everything cached about its sources.
+     *
+     * MapLibre tears the current style down as soon as a new document is handed to it, so from that
+     * moment the reference this object holds is a style nothing can be written to any more. Every
+     * write path (`setUserLocation`, `setRoute`, `setDestination`, `setBuildingsVisible`) reads
+     * [style], so clearing it here is what keeps a rebuild from leaving the old sources and layers
+     * reachable: nothing in this object outlives the style it belongs to.
+     */
+    private fun forgetStyle() {
+        style = null
+        // The overlay sources are (re)created empty on the new style, so nothing is cached for them.
         payloads.reset()
         puckGate.reset()
         // The new style carries whatever visibility its document was generated with, which this
@@ -88,17 +113,27 @@ class MapController(private val map: MapLibreMap) {
         lastIssuedTarget = null
         // A flight started on the previous style has nothing left to animate onto.
         cancelInFlightAnimation()
-        ensureOverlayLayers(style)
     }
 
     /** True once a style document has loaded, so layer-property writes will actually take effect. */
     fun hasStyleLoaded(): Boolean = style != null
 
-    /** Applies a generated style document. Overlay layers are re-created on the new style. */
+    /**
+     * Applies a generated style document. Overlay layers are re-created on the new style.
+     *
+     * The old style is released before the new one is handed over, and the callback is accepted
+     * only when it belongs to the rebuild that is still pending: a style load that is superseded by
+     * a newer one (or by [destroy]) installs nothing, instead of leaving a second set of overlays
+     * on a style the map no longer shows.
+     */
     fun applyStyle(styleJson: String, theme: MapTheme, onLoaded: () -> Unit = {}) {
+        val token = styleSwaps.beginSwap()
+        forgetStyle()
         map.setStyle(Style.Builder().fromJson(styleJson)) { newStyle ->
-            onStyleLoaded(newStyle)
-            onLoaded()
+            if (styleSwaps.attach(token)) {
+                adoptStyle(newStyle)
+                onLoaded()
+            }
         }
     }
 
@@ -314,12 +349,10 @@ class MapController(private val map: MapLibreMap) {
     }
 
     fun destroy() {
+        // A style load still in flight must not adopt anything onto a torn-down map.
+        styleSwaps.detach()
         // Nothing should keep flying onto a map that is being torn down.
-        cancelInFlightAnimation()
-        style = null
-        payloads.reset()
-        puckGate.reset()
-        lastIssuedTarget = null
+        forgetStyle()
     }
 
     /** Pushes [build]'s document to [source] unless the payload for [key] is already in place. */
