@@ -153,9 +153,20 @@ class RoutingGraphPackageTest {
     }
 
     @Test
-    fun `every rejection has its own actionable sentence`() {
+    fun `every rejection has an actionable sentence`() {
         val sentences = RoutingGraphPackage.Problem.entries.map { RoutingGraphPackage.describe(it) }
-        assertEquals("one sentence per problem", RoutingGraphPackage.Problem.entries.size, sentences.toSet().size)
+        // A missing file and an empty one are the same thing to the user (an incomplete package), so
+        // they deliberately share a sentence; every other problem reads differently.
+        assertEquals(
+            "one sentence per kind of fault",
+            RoutingGraphPackage.Problem.entries.size - 1,
+            sentences.toSet().size,
+        )
+        assertEquals(
+            "a missing file and an empty file should read the same",
+            RoutingGraphPackage.describe(RoutingGraphPackage.Problem.MISSING_FILE),
+            RoutingGraphPackage.describe(RoutingGraphPackage.Problem.EMPTY_FILE),
+        )
         for ((problem, sentence) in RoutingGraphPackage.Problem.entries.zip(sentences)) {
             assertTrue("$problem has no sentence", sentence.isNotBlank())
             // What a user must never see in place of a message.
