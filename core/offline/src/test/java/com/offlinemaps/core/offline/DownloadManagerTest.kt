@@ -28,6 +28,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -722,6 +723,70 @@ class DownloadManagerTest {
         assertEquals(8_000L, manager.backoffCeilingMillis(5))
         assertEquals(8_000L, manager.backoffCeilingMillis(20))
         assertTrue("the jitter must never push the delay past the cap", manager.backoffMillis(20) <= 8_000L)
+    }
+
+    /** A store whose first durable write dies the way a missing native class does. */
+    private class ErroringSaveStore : DownloadStore {
+        override suspend fun find(key: String): DownloadEntry? = null
+        override suspend fun save(entry: DownloadEntry) {
+            throw NoClassDefFoundError("javax/xml/stream/XMLInputFactory")
+        }
+        override suspend fun update(key: String, status: DownloadStatus, bytes: Long, error: String?) = Unit
+        override suspend fun delete(key: String) = Unit
+        override suspend fun pending(): List<DownloadEntry> = emptyList()
+    }
+
+    /** A store that cannot even record a failure, as on a device that has just run out of space. */
+    private class UnwritableStore(private val delegate: DownloadStore) : DownloadStore {
+        override suspend fun find(key: String) = delegate.find(key)
+        override suspend fun save(entry: DownloadEntry) = delegate.save(entry)
+        override suspend fun update(key: String, status: DownloadStatus, bytes: Long, error: String?) {
+            throw IOException("No space left on device")
+        }
+        override suspend fun delete(key: String) = delegate.delete(key)
+        override suspend fun pending() = delegate.pending()
+    }
+
+    private fun managerWith(store: DownloadStore) = DownloadManager(
+        client = OkHttpClient(),
+        store = store,
+        storage = storage,
+        network = network,
+        scope = scope,
+        maxRetries = 1,
+    )
+
+    @Test
+    fun `an error escaping the transfer is reported instead of leaving the package running`() = runBlocking {
+        // The store's first write throws an Error, which no Exception handler inside the engine
+        // catches. It used to be swallowed by the job's runCatching, leaving the package showing
+        // RUNNING for ever with no reason on screen.
+        val manager = managerWith(ErroringSaveStore())
+        manager.start(request(), wifiOnly = false)
+
+        val runtime = awaitTerminal(manager)
+        assertEquals(DownloadStatus.FAILED, runtime.status)
+        assertTrue("a failed download must carry a reason", !runtime.error.isNullOrBlank())
+        assertTrue(
+            "the reason must not be a bare class name: ${runtime.error}",
+            runtime.error!!.length > 20,
+        )
+    }
+
+    @Test
+    fun `a failure is still reported when the durable row cannot be written`() = runBlocking {
+        // A full disk fails the download and then fails the row that records it. The reason has to
+        // reach the UI anyway, so the state is published before the store is written.
+        network.update(online = false, unmetered = false)
+        val manager = managerWith(UnwritableStore(store))
+        manager.start(request(), wifiOnly = false)
+
+        val runtime = awaitTerminal(manager)
+        assertEquals(DownloadStatus.FAILED, runtime.status)
+        assertTrue(
+            "expected the offline reason, saw ${runtime.error}",
+            runtime.error?.contains("offline", ignoreCase = true) == true,
+        )
     }
 
     @Test

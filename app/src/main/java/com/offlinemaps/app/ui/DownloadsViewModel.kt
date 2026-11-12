@@ -3,6 +3,7 @@ package com.offlinemaps.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.offlinemaps.app.di.ServiceLocator
+import com.offlinemaps.app.install.InstallFailures
 import com.offlinemaps.app.install.PackageInstaller
 import com.offlinemaps.core.common.DownloadStatus
 import com.offlinemaps.core.common.Formatters
@@ -21,6 +22,7 @@ import com.offlinemaps.core.offline.DownloadRequest
 import com.offlinemaps.core.offline.RegionCatalogParser
 import com.offlinemaps.core.offline.StorageGuard
 import com.offlinemaps.core.offline.TileRegionEstimator
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -416,27 +418,38 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
             when (result) {
                 is PackageInstaller.InstallResult.Success -> {
                     val region = _state.value.regions.firstOrNull { it.id == record.regionId }
+                    var recordFailure: String? = null
                     if (region != null) {
-                        locator.installedRegions.save(
-                            InstalledRegion(
-                                regionId = region.id,
-                                name = region.name,
-                                type = record.type,
-                                sizeBytes = record.bytesTotal,
-                                version = "1",
-                                installedAt = System.currentTimeMillis(),
-                                bounds = region.bounds,
-                                minZoom = region.minZoom,
-                                maxZoom = region.maxZoom,
-                                routingReady = record.type == MapPackageType.ROUTING_OSM,
-                                searchReady = record.type == MapPackageType.PLACES_PACK,
-                            ),
-                        )
+                        try {
+                            locator.installedRegions.save(
+                                InstalledRegion(
+                                    regionId = region.id,
+                                    name = region.name,
+                                    type = record.type,
+                                    sizeBytes = record.bytesTotal,
+                                    version = "1",
+                                    installedAt = System.currentTimeMillis(),
+                                    bounds = region.bounds,
+                                    minZoom = region.minZoom,
+                                    maxZoom = region.maxZoom,
+                                    routingReady = record.type == MapPackageType.ROUTING_OSM,
+                                    searchReady = record.type == MapPackageType.PLACES_PACK,
+                                ),
+                            )
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: Throwable) {
+                            // The package is on disk and usable; only the record of it could not be
+                            // written. Without this the throw escaped the ViewModel scope and took
+                            // the app down at the end of a successful install.
+                            recordFailure = InstallFailures.describe(e, record.name)
+                        }
                     }
+                    val message = recordFailure ?: result.message
                     _state.update {
                         it.copy(
-                            banner = result.message,
-                            messages = it.messages + ("install-${record.packageKey}" to result.message),
+                            banner = message,
+                            messages = it.messages + ("install-${record.packageKey}" to message),
                         )
                     }
                 }

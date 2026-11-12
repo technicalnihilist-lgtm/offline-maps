@@ -5,6 +5,7 @@ import android.util.Log
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.core.common.MapPackageType
 import com.offlinemaps.core.offline.ZipExtractor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -47,11 +48,15 @@ class PackageInstaller(
                 "Not enough memory to build the routing graph for $displayName. " +
                     "Try a smaller region - very large extracts (a whole country) need a desktop tool.",
             )
+        } catch (e: CancellationException) {
+            // Cancellation is not a failure: the caller's scope is gone, so nothing should be
+            // reported. Swallowing it here used to turn a cancelled install into a bogus error.
+            throw e
         } catch (e: Throwable) {
             // Catch Throwable, not Exception: a missing desktop-only class on Android surfaces as
             // NoClassDefFoundError, and letting an Error escape here kills the whole app.
             Log.e(TAG, "install failed for $regionId", e)
-            InstallResult.Failure(describe(e, displayName))
+            InstallResult.Failure(InstallFailures.describe(e, displayName))
         }
     }
 
@@ -155,24 +160,13 @@ class PackageInstaller(
                     "Not enough memory to build the routing graph for the sample region. " +
                         "Close other apps and try again.",
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Log.e(TAG, "bundled sample install failed", e)
-                InstallResult.Failure(describe(e, "the sample region"))
+                InstallResult.Failure(InstallFailures.describe(e, "the sample region"))
             }
         }
-
-    /** Turns any throwable into something a user can act on, without leaking internals. */
-    private fun describe(error: Throwable, subject: String): String = when (error) {
-        is NoClassDefFoundError, is NoSuchMethodError ->
-            "The routing engine needs a component that is missing on this device " +
-                "(${error.message}). This is a packaging problem in the app, not something you did - " +
-                "please report it."
-        is OutOfMemoryError ->
-            "Not enough memory to prepare $subject. Close other apps and try again."
-        is SecurityException ->
-            "Storage permission was refused, so $subject could not be installed."
-        else -> error.message ?: "Installing $subject failed (${error.javaClass.simpleName})."
-    }
 
     /** Copies the first asset name that exists, so packaging differences cannot break install. */
     private fun copyFirstAsset(target: File, vararg assetNames: String): Boolean {

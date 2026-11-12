@@ -3,6 +3,7 @@ package com.offlinemaps.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.offlinemaps.app.di.ServiceLocator
+import com.offlinemaps.app.install.InstallFailures
 import com.offlinemaps.app.install.PackageInstaller
 import com.offlinemaps.app.map.MapCameraState
 import com.offlinemaps.app.nav.NavigationSessionUi
@@ -26,6 +27,7 @@ import com.offlinemaps.core.location.exploreFiltered
 import com.offlinemaps.core.map.MapConfig
 import com.offlinemaps.core.map.StyleOptions
 import com.offlinemaps.core.routing.RouteResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -338,23 +340,36 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
             }
             when (result) {
                 is PackageInstaller.InstallResult.Success -> {
-                    locator.installedRegions.save(
-                        InstalledRegion(
-                            regionId = PackageInstaller.BUNDLED_REGION_ID,
-                            name = "Andorra (bundled sample)",
-                            type = MapPackageType.ROUTING_OSM,
-                            sizeBytes = 553_000L,
-                            version = "bundled",
-                            installedAt = System.currentTimeMillis(),
-                            bounds = GeoBounds(42.42, 1.41, 42.66, 1.79),
-                            minZoom = 6,
-                            maxZoom = 16,
-                            routingReady = true,
-                            searchReady = true,
-                        ),
-                    )
+                    var recordFailure: String? = null
+                    try {
+                        locator.installedRegions.save(
+                            InstalledRegion(
+                                regionId = PackageInstaller.BUNDLED_REGION_ID,
+                                name = "Andorra (bundled sample)",
+                                type = MapPackageType.ROUTING_OSM,
+                                sizeBytes = 553_000L,
+                                version = "bundled",
+                                installedAt = System.currentTimeMillis(),
+                                bounds = GeoBounds(42.42, 1.41, 42.66, 1.79),
+                                minZoom = 6,
+                                maxZoom = 16,
+                                routingReady = true,
+                                searchReady = true,
+                            ),
+                        )
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (e: Throwable) {
+                        // The graph is loaded and usable; only the record of it could not be written.
+                        // Rethrowing here would escape the ViewModel scope and kill the app.
+                        recordFailure = InstallFailures.describe(e, "the sample region")
+                    }
                     _state.update {
-                        it.copy(installingSample = false, sampleMessage = result.message, hasRoutingData = true)
+                        it.copy(
+                            installingSample = false,
+                            sampleMessage = recordFailure ?: result.message,
+                            hasRoutingData = true,
+                        )
                     }
                 }
                 is PackageInstaller.InstallResult.Failure -> _state.update {

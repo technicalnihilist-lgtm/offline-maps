@@ -107,7 +107,17 @@ class DownloadManager(
                 // a cancel cleanup may still have the files to delete. Either way it owns them
                 // until it is done, so the transfer waits instead of opening them alongside it.
                 previous?.join()
-                runCatching { execute(request, wifiOnly) }
+                try {
+                    execute(request, wifiOnly)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (e: Throwable) {
+                    // execute() reports every Exception itself. What lands here is an Error - a native
+                    // library that will not load, or an OutOfMemoryError while a chunk is written -
+                    // and swallowing it left the package showing RUNNING for ever with no reason on
+                    // screen. It is reported like any other failure instead.
+                    fail(request, DownloadFailureKind.UNKNOWN, describeUncaught(e))
+                }
             }
             jobs[key] = launched
             predecessors[key] = launched
@@ -552,7 +562,9 @@ class DownloadManager(
 
     private suspend fun fail(request: DownloadRequest, kind: DownloadFailureKind, message: String) {
         val bytes = if (partFile(request).exists()) partFile(request).length() else 0L
-        store.update(request.packageKey, DownloadStatus.FAILED, bytes, message)
+        // The reason is published before the durable row is written: the store writes to the same
+        // disk that just failed, so a full device would otherwise lose the row and leave the
+        // download with no message at all.
         _states.update {
             it + (request.packageKey to DownloadRuntime(
                 packageKey = request.packageKey,
@@ -561,6 +573,19 @@ class DownloadManager(
                 error = message,
             ))
         }
+        try {
+            store.update(request.packageKey, DownloadStatus.FAILED, bytes, message)
+        } catch (e: Exception) {
+            // Nothing left to do: the failure is already on screen.
+        }
+    }
+
+    /** The sentence shown when an Error escapes the transfer, which no handler inside it caught. */
+    private fun describeUncaught(error: Throwable): String = when (error) {
+        is OutOfMemoryError ->
+            "Not enough memory to finish the download. Close other apps and try again."
+        else ->
+            "The download could not be completed (${error.javaClass.simpleName}). Please try again."
     }
 
     private fun setState(key: String, status: DownloadStatus, bytes: Long = 0L, error: String? = null) {
