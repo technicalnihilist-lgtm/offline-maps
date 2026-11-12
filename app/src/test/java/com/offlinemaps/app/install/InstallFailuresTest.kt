@@ -24,7 +24,8 @@ class InstallFailuresTest {
 
         assertThat(message).contains("damaged or incomplete")
         assertThat(message).contains("Andorra")
-        assertThat("an internal CRC value must not reach the user", message).doesNotContain("CRC")
+        assertThat("an internal CRC value must not reach the user: $message", message.contains("CRC"))
+            .isFalse()
     }
 
     @Test
@@ -40,7 +41,8 @@ class InstallFailuresTest {
         val message = InstallFailures.describe(DataFormatException("incorrect data check"), "Andorra")
 
         assertThat(message).contains("damaged or incomplete")
-        assertThat(message).doesNotContain("incorrect data check")
+        assertThat("the deflate error must not reach the user: $message", message.contains("incorrect data check"))
+            .isFalse()
     }
 
     @Test
