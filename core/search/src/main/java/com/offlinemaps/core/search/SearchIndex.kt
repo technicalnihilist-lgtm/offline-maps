@@ -67,8 +67,14 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         db.rawQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(table))
             .use { it.moveToFirst() }
 
-    /** Bulk insert, replacing any previous rows for the same region. Runs in one transaction. */
-    fun importPack(regionId: String, records: Sequence<PlaceRecord>, onProgress: (Int) -> Unit = {}) {
+    /**
+     * Bulk insert, replacing any previous rows for the same region. Runs in one transaction.
+     *
+     * Returns the number of rows written. A [Sequence] that fails part-way (a truncated pack, see
+     * [PlacesPackReader]) rolls the transaction back and rethrows, so a half-read pack never leaves
+     * a region with a partial set of rows; the file overload below is the one that salvages.
+     */
+    fun importPack(regionId: String, records: Sequence<PlaceRecord>, onProgress: (Int) -> Unit = {}): Int {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -99,13 +105,23 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             }
             db.setTransactionSuccessful()
             onProgress(count)
+            return count
         } finally {
             db.endTransaction()
         }
     }
 
-    fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}) {
-        importPack(regionId, PlacesPackReader.read(file), onProgress)
+    /**
+     * Imports a places pack from disk and reports what it contained (OPTIMIZATION.md I-04).
+     *
+     * The reader keeps every record that decodes, so a pack whose gzip body ends early still
+     * indexes the readable prefix instead of leaving the region with no offline search at all; the
+     * returned [PlacesPackStats] is how the caller learns that the pack was incomplete.
+     */
+    fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}): PlacesPackStats {
+        val stats = PlacesPackStats()
+        importPack(regionId, PlacesPackReader.read(file, stats), onProgress)
+        return stats
     }
 
     fun count(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM places", null).use {

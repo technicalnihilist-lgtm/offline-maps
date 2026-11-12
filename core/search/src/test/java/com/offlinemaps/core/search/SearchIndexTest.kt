@@ -79,6 +79,42 @@ class SearchIndexTest {
     }
 
     @Test
+    fun `a truncated pack still indexes the places it could read`() {
+        val records = (1..300).map { PlaceRecord("n$it", "Place number $it of Andorra", "town", 42.5, 1.5) }
+        val file = writePack(records)
+        val bytes = file.readBytes()
+        file.writeBytes(bytes.copyOf(bytes.size / 2))
+
+        val stats = index.importPack("andorra", file)
+
+        assertTrue("expected the readable prefix to be indexed, got ${stats.records}", stats.records > 0)
+        assertTrue("expected the cut pack to be reported as truncated", stats.truncated)
+        assertEquals(stats.records, index.countForRegion("andorra"))
+        assertTrue("search must still work over what was indexed", index.search("Place").isNotEmpty())
+    }
+
+    @Test
+    fun `a pack with a broken line keeps the sound rows`() {
+        val file = File.createTempFile("places", ".jsonl.gz")
+        GZIPOutputStream(file.outputStream()).bufferedWriter().use { writer ->
+            writer.write("""{"id":"n1","name":"Ordino","type":"town","lat":42.5562,"lon":1.5335}""")
+            writer.write("\n")
+            writer.write("{not json at all\n")
+            writer.write("""{"id":"n2","name":"Canillo","type":"village","lat":42.5667,"lon":1.6}""")
+            writer.write("\n")
+        }
+
+        val stats = index.importPack("andorra", file)
+
+        assertEquals(2, stats.records)
+        assertEquals(1, stats.skippedLines)
+        assertFalse(stats.truncated)
+        assertTrue(stats.damaged)
+        assertEquals(2, index.countForRegion("andorra"))
+        assertTrue(index.search("Canillo").isNotEmpty())
+    }
+
+    @Test
     fun `prefix search finds a place by its first letters`() {
         index.importPack("andorra", writePack(listOf(PlaceRecord("n1", "Andorra la Vella", "town", 42.5069, 1.5212))))
         val results = index.search("Andor")

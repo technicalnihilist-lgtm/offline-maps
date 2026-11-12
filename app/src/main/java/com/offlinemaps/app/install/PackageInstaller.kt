@@ -39,7 +39,7 @@ class PackageInstaller(
         try {
             when (type) {
                 MapPackageType.ROUTING_OSM -> installRouting(regionId, file, onProgress)
-                MapPackageType.PLACES_PACK -> installPlaces(regionId, file, onProgress)
+                MapPackageType.PLACES_PACK -> installPlaces(regionId, displayName, file, onProgress).result
                 MapPackageType.MBTILES -> installMbtiles(file, onProgress)
                 MapPackageType.TILE_REGION -> InstallResult.Success("$displayName is ready offline.")
             }
@@ -101,15 +101,51 @@ class PackageInstaller(
         )
     }
 
+    /** The result of indexing a places pack, plus whether part of it could not be read. */
+    private data class PlacesIndexOutcome(val result: InstallResult, val damaged: Boolean)
+
+    /**
+     * Indexes a places pack.
+     *
+     * A pack that is damaged part-way (a download that stopped early, a line that is not JSON) is
+     * not thrown away: the reader keeps every record that decodes, so the region still gets offline
+     * search over what survived, and only the sentence shown afterwards says the pack was incomplete
+     * (OPTIMIZATION.md I-04). A pack that yields nothing at all is a failed install, because there
+     * is no index to mark ready.
+     */
     private suspend fun installPlaces(
         regionId: String,
+        displayName: String,
         file: File,
         onProgress: (String) -> Unit,
-    ): InstallResult {
+    ): PlacesIndexOutcome {
         onProgress("Indexing places for offline search")
-        locator.search.importPack(regionId, file) { count -> onProgress("Indexed $count places") }
+        val stats = locator.search.importPack(regionId, file) { count -> onProgress("Indexed $count places") }
+        if (stats.records == 0) {
+            return PlacesIndexOutcome(
+                InstallResult.Failure(
+                    "The places pack for $displayName is damaged or empty, so no places could be read " +
+                        "from it. Delete it and download it again.",
+                ),
+                damaged = true,
+            )
+        }
         locator.installedRegions.setSearchReady(regionId, true)
-        return InstallResult.Success("Offline search is ready for this region.")
+        return if (stats.damaged) {
+            PlacesIndexOutcome(
+                InstallResult.Success(
+                    "Offline search is partly ready for $displayName: ${stats.records} places were " +
+                        "indexed, but the pack is damaged, so some places are missing. Download it " +
+                        "again to complete the index.",
+                ),
+                damaged = true,
+            )
+        } else {
+            PlacesIndexOutcome(
+                InstallResult.Success("Offline search is ready for this region."),
+                damaged = false,
+            )
+        }
     }
 
     private suspend fun installMbtiles(file: File, onProgress: (String) -> Unit): InstallResult {
@@ -151,8 +187,11 @@ class PackageInstaller(
                         )
                     }
                 }
-                val places = installPlaces(BUNDLED_REGION_ID, placesFile, onProgress)
-                if (places is InstallResult.Failure) return@withContext places
+                val places = installPlaces(BUNDLED_REGION_ID, "the sample region", placesFile, onProgress)
+                if (places.result is InstallResult.Failure) return@withContext places.result
+                // A damaged bundled pack gets its own sentence rather than the cheerful "sample
+                // installed" one, so the missing places are not silently hidden.
+                if (places.damaged) return@withContext places.result
 
                 InstallResult.Success("Sample region installed: routing and offline search are ready.")
             } catch (e: OutOfMemoryError) {

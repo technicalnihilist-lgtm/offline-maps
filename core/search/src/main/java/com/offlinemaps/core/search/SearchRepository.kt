@@ -108,7 +108,7 @@ class SearchRepository(
             runCatching { index.nearby(center, radiusMeters, limit) }.getOrDefault(emptyList())
         }
 
-    suspend fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}) =
+    suspend fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}): PlacesPackStats =
         withContext(io) { index.importPack(regionId, file, onProgress) }
 
     suspend fun removeRegion(regionId: String) = withContext(io) { index.deleteRegion(regionId) }
