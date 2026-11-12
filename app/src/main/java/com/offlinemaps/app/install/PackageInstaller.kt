@@ -5,6 +5,7 @@ import android.util.Log
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.core.common.MapPackageType
 import com.offlinemaps.core.offline.ZipExtractor
+import com.offlinemaps.core.routing.RoutingGraphPackage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -90,6 +91,16 @@ class PackageInstaller(
         } catch (e: Throwable) {
             Log.e(TAG, "routing package unzip failed", e)
             return InstallResult.Failure("The routing package is not a valid graph archive.")
+        }
+        // The zip opened, but a package is not a graph just because it unzips (I-05): it can be a
+        // re-zipped tile archive, a truncated download or a graph built with another encoder set.
+        // Those are caught here so the region is not left with a directory that looks installed
+        // and fails on every later load.
+        val verdict = RoutingGraphPackage.inspect(graphDir)
+        if (verdict is RoutingGraphPackage.Verdict.Unusable) {
+            Log.w(TAG, "routing package for $regionId rejected: ${verdict.problem}")
+            graphDir.deleteRecursively()
+            return InstallResult.Failure(RoutingGraphPackage.describe(verdict.problem))
         }
         onProgress("Loading routing graph")
         return locator.routingEngine.load { phase -> onProgress(phase) }.fold(

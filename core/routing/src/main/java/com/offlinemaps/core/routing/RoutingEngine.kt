@@ -45,7 +45,7 @@ class RoutingEngine(private val graphRoot: File) {
      */
     private var lazyReloadFailed = false
 
-    /** How many times a graph import has been attempted. Read by tests only. */
+    /** How many times a graph load has been attempted. Read by tests only. */
     internal var loadAttempts: Int = 0
         private set
 
@@ -101,11 +101,23 @@ class RoutingEngine(private val graphRoot: File) {
         }
         if (!hasGraph()) {
             return Result.failure(
-                IllegalStateException("No routing graph is installed for this region yet."),
+                IllegalStateException(
+                    RoutingGraphPackage.describe(RoutingGraphPackage.Problem.MISSING_DIRECTORY),
+                ),
             )
         }
+        // A directory with something in it was an attempt, whether or not it turns out to be a
+        // graph: the counter is what stops a broken package being retried on every fix.
+        loadAttempts++
+        // Reject a package that is not a graph before GraphHopper is asked to open it (I-05): a
+        // half-unpacked graph or one built with another encoder set otherwise surfaces as a raw
+        // "could not be loaded (IllegalStateException: ...)" string, or as an import attempt that
+        // cannot work on Android.
+        val verdict = RoutingGraphPackage.inspect(graphRoot)
+        if (verdict is RoutingGraphPackage.Verdict.Unusable) {
+            return Result.failure(IllegalStateException(RoutingGraphPackage.describe(verdict.problem)))
+        }
         return try {
-            loadAttempts++
             onProgress("Loading routing graph")
             val config = GraphHopperConfig()
                 .putObject("graph.location", graphRoot.absolutePath)
