@@ -1,6 +1,7 @@
 package com.offlinemaps.app.install
 
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertFalse
 import java.io.EOFException
 import java.io.IOException
 import java.util.concurrent.CancellationException
@@ -24,8 +25,7 @@ class InstallFailuresTest {
 
         assertThat(message).contains("damaged or incomplete")
         assertThat(message).contains("Andorra")
-        assertThat("an internal CRC value must not reach the user: $message", message.contains("CRC"))
-            .isFalse()
+        assertFalse("an internal CRC value must not reach the user: $message", message.contains("CRC"))
     }
 
     @Test
@@ -41,8 +41,10 @@ class InstallFailuresTest {
         val message = InstallFailures.describe(DataFormatException("incorrect data check"), "Andorra")
 
         assertThat(message).contains("damaged or incomplete")
-        assertThat("the deflate error must not reach the user: $message", message.contains("incorrect data check"))
-            .isFalse()
+        assertFalse(
+            "the deflate error must not reach the user: $message",
+            message.contains("incorrect data check"),
+        )
     }
 
     @Test
