@@ -377,6 +377,26 @@ class SearchIndexTest {
         assertEquals(listOf("Just north"), found.map { it.name })
     }
 
+    /**
+     * OPTIMIZATION.md I-01: `nearby` builds its bounding box straight from the centre point instead
+     * of going through `GeoBounds.of(listOf(center))!!`. The box must still collapse onto that point
+     * when the radius is zero, so only a place at the exact centre comes back.
+     */
+    @Test
+    fun `nearby with a zero radius keeps only the place at the centre`() {
+        index.importPack(
+            "andorra",
+            writePack(
+                listOf(
+                    PlaceRecord("here", "At the centre", "town", 42.5069, 1.5212),
+                    PlaceRecord("away", "A block away", "town", 42.5070, 1.5212),
+                ),
+            ),
+        )
+        val found = index.nearby(GeoPoint(42.5069, 1.5212), radiusMeters = 0.0)
+        assertEquals(listOf("At the centre"), found.map { it.name })
+    }
+
     /** OPTIMIZATION.md D-05: the row cap follows the requested limit and never exceeds its ceiling. */
     @Test
     fun `nearby row cap follows the limit and is bounded`() {

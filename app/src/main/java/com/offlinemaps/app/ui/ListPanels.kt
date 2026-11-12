@@ -59,9 +59,10 @@ fun DownloadsPanel(locator: ServiceLocator) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (state.banner != null) {
+            val banner = state.banner
+            if (banner != null) {
                 Spacer(Modifier.height(6.dp))
-                StatusChip(text = state.banner!!, tone = StatusTone.WARNING, onClick = viewModel::dismissBanner)
+                StatusChip(text = banner, tone = StatusTone.WARNING, onClick = viewModel::dismissBanner)
             }
             Spacer(Modifier.height(8.dp))
             LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
@@ -230,8 +231,9 @@ fun SavedPanel(locator: ServiceLocator, onGoTo: (GeoPoint) -> Unit) {
     FloatingPanel(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text("Saved places", style = MaterialTheme.typography.headlineSmall)
-            if (state.message != null) {
-                StatusChip(text = state.message!!, tone = StatusTone.POSITIVE, onClick = viewModel::dismissMessage)
+            val message = state.message
+            if (message != null) {
+                StatusChip(text = message, tone = StatusTone.POSITIVE, onClick = viewModel::dismissMessage)
             }
             LazyColumn(Modifier.heightIn(max = 360.dp)) {
                 if (state.places.isEmpty()) {
@@ -285,11 +287,13 @@ fun SettingsPanel(locator: ServiceLocator) {
     FloatingPanel(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text("Settings", style = MaterialTheme.typography.headlineSmall)
-            if (state.message != null) {
-                StatusChip(text = state.message!!, tone = StatusTone.POSITIVE, onClick = viewModel::dismissMessage)
+            val message = state.message
+            if (message != null) {
+                StatusChip(text = message, tone = StatusTone.POSITIVE, onClick = viewModel::dismissMessage)
             }
-            if (state.speechMessage != null) {
-                StatusChip(text = state.speechMessage!!, tone = StatusTone.WARNING, onClick = viewModel::dismissMessage)
+            val speechMessage = state.speechMessage
+            if (speechMessage != null) {
+                StatusChip(text = speechMessage, tone = StatusTone.WARNING, onClick = viewModel::dismissMessage)
             }
             LazyColumn(Modifier.heightIn(max = 380.dp)) {
                 item { SectionHeader("Appearance") }

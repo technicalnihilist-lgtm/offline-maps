@@ -187,7 +187,14 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
      * [PlaceResult] is built for a place that will not be returned.
      */
     fun nearby(center: GeoPoint, radiusMeters: Double, limit: Int = 40): List<PlaceResult> {
-        val bounds = GeoBounds.of(listOf(center))!!.expandedBy(radiusMeters)
+        // A single point is its own bounds, so build them directly instead of going through
+        // GeoBounds.of (which can return null for an empty list and forces a non-null assertion).
+        val bounds = GeoBounds(
+            south = center.latitude,
+            west = center.longitude,
+            north = center.latitude,
+            east = center.longitude,
+        ).expandedBy(radiusMeters)
         val rowCap = rowCapFor(limit)
         val found = ArrayList<Pair<Double, PlaceResult>>(minOf(rowCap, 64))
         readableDatabase.rawQuery(NEARBY_BBOX_SQL, nearbyArgs(center, bounds, rowCap)).use { cursor ->
