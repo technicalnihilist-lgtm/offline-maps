@@ -21,6 +21,7 @@ import okio.ForwardingSource
 import okio.buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -125,8 +126,10 @@ class StorageRemovalTest {
         assertEquals(DownloadStatus.FAILED, runtime.status)
         assertEquals(TargetStorage.UNAVAILABLE_SENTENCE, runtime.error)
         assertEquals("no bytes should be requested for an unusable folder", 0, server.requestCount)
-        assertEquals(DownloadStatus.FAILED, store.find("test-pkg")?.status)
-        assertEquals(TargetStorage.UNAVAILABLE_SENTENCE, store.find("test-pkg")?.errorMessage)
+        // Like every other failure raised before the transfer starts (offline, metered link, no
+        // space), nothing was written to the store yet, so there is no row to assert on: the
+        // reason reaches the user through the published state above.
+        assertNull(store.find("test-pkg"))
     }
 
     @Test
