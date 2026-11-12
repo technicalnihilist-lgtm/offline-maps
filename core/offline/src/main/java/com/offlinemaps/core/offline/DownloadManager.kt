@@ -237,6 +237,14 @@ class DownloadManager(
         }
 
         request.targetDirectory.mkdirs()
+        // A folder that is gone and cannot be recreated - an ejected card, a read-only mount, or a
+        // path the system replaced - used to be discovered by the first write, which threw a raw
+        // IOException, was retried as a network failure and finally blamed the connection. The
+        // answer is known here, so it is reported as the storage failure it is.
+        TargetStorage.problem(request.targetDirectory)?.let { reason ->
+            fail(request, DownloadFailureKind.STORAGE, reason)
+            return
+        }
         spaceShortfall(request)?.let { reason ->
             fail(request, DownloadFailureKind.STORAGE, reason)
             return
@@ -262,6 +270,12 @@ class DownloadManager(
         var attempt = 0
         while (true) {
             if (attempt > 0) {
+                // The storage can go away between attempts too, and a retry that resumes into a
+                // folder that is no longer there would fail the same way every time.
+                TargetStorage.problem(request.targetDirectory)?.let { reason ->
+                    fail(request, DownloadFailureKind.STORAGE, reason)
+                    return
+                }
                 // A retry is a resume, and the disk that was big enough when the transfer started
                 // may not be big enough now: the previous attempt wrote more bytes into the .part
                 // file, and the device may have filled up in the meantime. Checking only once at
@@ -287,6 +301,13 @@ class DownloadManager(
                 setState(request.packageKey, DownloadStatus.QUEUED, error = e.message)
                 delay(backoffMillis(attempt))
             } catch (e: IOException) {
+                // A write that failed because the card was pulled is not a network problem: no
+                // retry brings the storage back, and the raw IOException names a path rather than
+                // a cause. Checked before the retry budget so the user is told at once.
+                TargetStorage.problem(request.targetDirectory)?.let { reason ->
+                    fail(request, DownloadFailureKind.STORAGE, reason)
+                    return
+                }
                 if (attempt >= maxRetries) {
                     fail(request, DownloadFailureKind.NETWORK, "Network error: ${e.message ?: "connection lost"}")
                     return
@@ -442,6 +463,13 @@ class DownloadManager(
 
     private suspend fun verifyAndFinish(request: DownloadRequest) {
         val part = partFile(request)
+        if (!part.exists()) {
+            // The bytes written to the open handle are gone from the filesystem: the storage they
+            // were on was removed mid-transfer. The size check below would have called this
+            // "stopped early (0 of N bytes)" and retried a transfer that can never land.
+            fail(request, DownloadFailureKind.STORAGE, TargetStorage.UNAVAILABLE_SENTENCE)
+            return
+        }
         setState(request.packageKey, DownloadStatus.VERIFYING, bytes = part.length())
         store.update(request.packageKey, DownloadStatus.VERIFYING, part.length(), null)
 
