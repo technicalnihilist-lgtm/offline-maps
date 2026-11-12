@@ -25,13 +25,16 @@ data class RegionCatalogFile(
 
 @Serializable
 data class RegionEntry(
-    val id: String,
-    val name: String,
-    val country: String,
-    val south: Double,
-    val west: Double,
-    val north: Double,
-    val east: Double,
+    // Everything except the packages is defaulted so that one truncated entry in a refreshed
+    // catalogue cannot abort the decode of the whole file; [RegionCatalogParser.rejectReason]
+    // then throws away just the entries that are actually unusable.
+    val id: String = "",
+    val name: String = "",
+    val country: String = "",
+    val south: Double = Double.NaN,
+    val west: Double = Double.NaN,
+    val north: Double = Double.NaN,
+    val east: Double = Double.NaN,
     @SerialName("min_zoom") val minZoom: Int = 4,
     @SerialName("max_zoom") val maxZoom: Int = 14,
     val packages: List<PackageEntry> = emptyList(),
@@ -41,8 +44,8 @@ data class RegionEntry(
 
 @Serializable
 data class PackageEntry(
-    val type: String,
-    val url: String,
+    val type: String = "",
+    val url: String = "",
     @SerialName("size_bytes") val sizeBytes: Long = 0L,
     val sha256: String? = null,
     val md5: String? = null,
@@ -53,11 +56,52 @@ data class PackageEntry(
 object RegionCatalogParser {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    /** Web-Mercator latitude limit: outside it there is no tile at any zoom level. */
+    private const val MAX_MERCATOR_LAT = 85.05112878
+
     fun parse(raw: String): RegionCatalogFile = json.decodeFromString(RegionCatalogFile.serializer(), raw)
 
-    fun toDomain(file: RegionCatalogFile): List<RegionCatalogEntry> = file.regions.map { entry ->
-        val bounds = GeoBounds(entry.south, entry.west, entry.north, entry.east)
-        val packages = entry.packages.map { p ->
+    /**
+     * Why [entry] cannot become a usable region, or `null` when it can.
+     *
+     * The catalogue is refreshable from a user-configurable URL, so a single bad entry must cost
+     * us that entry and nothing more. Inverted bounds used to throw from [GeoBounds.init], which
+     * discarded every region in the file, and an inverted zoom range silently produced a tile
+     * estimate of zero, which read as "this region is free".
+     */
+    fun rejectReason(entry: RegionEntry): String? {
+        if (entry.id.isBlank()) return "missing id"
+        if (entry.name.isBlank()) return "missing name"
+        if (!entry.south.isFinite() || !entry.west.isFinite() ||
+            !entry.north.isFinite() || !entry.east.isFinite()
+        ) {
+            return "missing or non-finite bounds"
+        }
+        if (entry.south > entry.north) return "inverted latitude bounds"
+        if (entry.west > entry.east) return "inverted longitude bounds"
+        if (entry.south < -MAX_MERCATOR_LAT || entry.north > MAX_MERCATOR_LAT) {
+            return "latitude outside the mercator range"
+        }
+        if (entry.west < -180.0 || entry.east > 180.0) return "longitude outside -180..180"
+        if (entry.minZoom < 0 || entry.maxZoom > TileMath.MAX_ZOOM) {
+            return "zoom outside 0..${TileMath.MAX_ZOOM}"
+        }
+        if (entry.minZoom > entry.maxZoom) return "empty zoom range"
+        return null
+    }
+
+    /** Domain regions for every entry [rejectReason] accepts, in catalogue order. */
+    fun toDomain(file: RegionCatalogFile): List<RegionCatalogEntry> =
+        file.regions.filter { rejectReason(it) == null }.map { it.toDomain() }
+
+    /** Ids of the entries that were dropped, for logging and for the catalogue-refresh diff. */
+    fun rejected(file: RegionCatalogFile): List<String> =
+        file.regions.mapNotNull { entry -> rejectReason(entry)?.let { entry.id.ifBlank { "<no id>" } } }
+
+    private fun RegionEntry.toDomain(): RegionCatalogEntry {
+        val bounds = GeoBounds(south, west, north, east)
+        // A package with no URL cannot be fetched; dropping it keeps the region itself usable.
+        val packages = packages.filter { it.url.isNotBlank() }.map { p ->
             RegionPackage(
                 type = MapPackageType.entries.firstOrNull { it.name.equals(p.type, true) } ?: MapPackageType.ROUTING_OSM,
                 url = p.url,
@@ -68,17 +112,17 @@ object RegionCatalogParser {
                 license = p.license,
             )
         }
-        RegionCatalogEntry(
-            id = entry.id,
-            name = entry.name,
-            country = entry.country,
+        return RegionCatalogEntry(
+            id = id,
+            name = name,
+            country = country,
             bounds = bounds,
-            minZoom = entry.minZoom,
-            maxZoom = entry.maxZoom,
+            minZoom = minZoom,
+            maxZoom = maxZoom,
             packages = packages,
-            estimatedTileCount = TileMath.tileCount(bounds, entry.minZoom, entry.maxZoom),
-            license = entry.license,
-            attribution = entry.attribution,
+            estimatedTileCount = TileMath.tileCount(bounds, minZoom, maxZoom),
+            license = license,
+            attribution = attribution,
         )
     }
 }
