@@ -3,7 +3,6 @@ package com.offlinemaps.core.routing
 import com.offlinemaps.core.common.GeoMath
 import com.offlinemaps.core.common.GeoPoint
 import com.offlinemaps.core.common.LocationFix
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -230,9 +229,6 @@ class NavigationTracker(
         return GeoMath.destination(a, along, GeoMath.bearingDegrees(a, b))
     }
 
-    /** Straight-line distance left to the destination, used for sanity checks in the UI. */
-    fun distanceToDestination(fix: LocationFix): Double = GeoMath.distanceMeters(fix.point, plan.destination)
-
     companion object {
         /**
          * Beyond this the follow window is not trusted and the whole route is searched (through the
@@ -242,8 +238,5 @@ class NavigationTracker(
 
         /** True when the user has clearly moved away from the route and we should recalculate. */
         fun shouldRecalculate(state: NavigationState): Boolean = state.offRoute && !state.arrived
-
-        fun isHeadingReversed(routeBearing: Double, fixBearing: Double?): Boolean =
-            fixBearing != null && abs(GeoMath.angleDelta(routeBearing, fixBearing.toDouble())) > 120.0
     }
 }

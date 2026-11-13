@@ -4,7 +4,6 @@ import com.graphhopper.GHRequest
 import com.graphhopper.GraphHopper
 import com.graphhopper.GraphHopperConfig
 import com.graphhopper.config.Profile
-import com.graphhopper.routing.util.EncodingManager
 import com.graphhopper.util.Instruction
 import com.graphhopper.util.PointList
 import com.offlinemaps.core.common.GeoMath

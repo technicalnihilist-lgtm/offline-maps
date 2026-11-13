@@ -208,17 +208,6 @@ class DownloadManager(
         _states.update { it - request.packageKey }
     }
 
-    /** Resumes every download that was mid-flight when the process died. */
-    fun resumePending(wifiOnly: Boolean, requestFactory: (DownloadEntry) -> DownloadRequest?) {
-        scope.launch {
-            store.pending().forEach { entry ->
-                if (entry.status != DownloadStatus.COMPLETED) {
-                    requestFactory(entry)?.let { start(it, wifiOnly) }
-                }
-            }
-        }
-    }
-
     private suspend fun execute(request: DownloadRequest, wifiOnly: Boolean) {
         // A package whose bytes are already all on disk needs no transfer: the process can die
         // between the last chunk and the rename, and resuming that download used to cost a request

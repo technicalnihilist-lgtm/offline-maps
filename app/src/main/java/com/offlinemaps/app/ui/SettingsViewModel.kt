@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.app.speech.SpeechGuidance
-import com.offlinemaps.core.common.Formatters
 import com.offlinemaps.core.common.GraphicsQuality
 import com.offlinemaps.core.common.MapTheme
 import com.offlinemaps.core.data.AppSettings
@@ -41,11 +40,9 @@ class SettingsViewModel(private val locator: ServiceLocator) : ViewModel() {
     fun setWifiOnly(value: Boolean) = locator.settings.update { it.copy(wifiOnlyDownloads = value) }
     fun setStorageLimitMb(value: Long) = locator.settings.update { it.copy(storageLimitMb = value) }
     fun setVoiceEnabled(value: Boolean) = locator.settings.update { it.copy(voiceGuidanceEnabled = value) }
-    fun setTtsVolume(value: Float) = locator.settings.update { it.copy(ttsVolume = value) }
     fun setMetric(value: Boolean) = locator.settings.update { it.copy(metricUnits = value) }
     fun setTerrain(value: Boolean) = locator.settings.update { it.copy(terrainEnabled = value) }
     fun setBuildings(value: Boolean) = locator.settings.update { it.copy(buildings3DEnabled = value) }
-    fun setTileCacheMb(value: Long) = locator.settings.update { it.copy(tileCacheMb = value) }
 
     fun setLanguage(tag: String?) {
         locator.settings.update { it.copy(ttsLanguageTag = tag) }
@@ -108,6 +105,4 @@ class SettingsViewModel(private val locator: ServiceLocator) : ViewModel() {
     fun dismissMessage() {
         _state.value = _state.value.copy(message = null, speechMessage = null)
     }
-
-    fun storageLabel(): String = Formatters.bytes(_state.value.storageUsedBytes)
 }

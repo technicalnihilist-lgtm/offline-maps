@@ -61,9 +61,6 @@ class MapController(private val map: MapLibreMap) {
     /** The animated move this object started and has not seen the end of (see [moveTo]). */
     private val animations = CameraAnimationTracker()
 
-    /** Animated moves that replaced one that had not landed yet; diagnostics only. */
-    val interruptedAnimations: Int get() = animations.interrupted
-
     /** Camera moves dropped because they would not have moved the picture; diagnostics only. */
     var skippedMoves: Int = 0
         private set

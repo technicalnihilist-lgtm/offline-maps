@@ -1,6 +1,5 @@
 package com.offlinemaps.core.search
 
-import com.offlinemaps.core.common.GeoPoint
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -29,15 +28,13 @@ data class PlaceRecord(
      * True when [lat]/[lon] are a real WGS84 position (OPTIMIZATION.md I-08).
      *
      * A pack line is text from a download, so it can carry a latitude of 200 or a longitude of
-     * 1e9 - or a value that is not a number at all. [GeoPoint] refuses those in its `init`, so a
+     * 1e9 - or a value that is not a number at all. `GeoPoint` refuses those in its `init`, so a
      * record that reached the index would throw when a search built a point from its row, and one
      * bad line would take down every query over that region. The reader therefore treats such a
      * line as damage and skips it, the same way it skips a line that is not JSON.
      */
     fun hasValidPoint(): Boolean =
         lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
-
-    fun toPoint() = GeoPoint(lat, lon)
 }
 
 /**

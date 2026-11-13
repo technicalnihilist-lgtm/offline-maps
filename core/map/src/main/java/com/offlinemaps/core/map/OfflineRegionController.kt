@@ -11,7 +11,6 @@ import org.maplibre.android.offline.OfflineRegion
 import org.maplibre.android.offline.OfflineRegionError
 import org.maplibre.android.offline.OfflineRegionStatus
 import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
-import org.maplibre.android.storage.FileSource
 import kotlin.coroutines.resume
 
 /**
@@ -162,16 +161,6 @@ class OfflineRegionController(private val context: Context) {
             override fun onError(error: String) { if (cont.isActive) cont.resume(false) }
         })
     }
-
-    /** Caps the ambient cache so map browsing cannot fill the device. */
-    suspend fun setAmbientCacheSize(bytes: Long): Boolean = suspendCancellableCoroutine { cont ->
-        manager.setMaximumAmbientCacheSize(bytes, object : OfflineManager.FileSourceCallback {
-            override fun onSuccess() { if (cont.isActive) cont.resume(true) }
-            override fun onError(error: String) { if (cont.isActive) cont.resume(false) }
-        })
-    }
-
-    fun fileSource(): FileSource = FileSource.getInstance(context)
 
     private fun OfflineRegionStatus.toRegionStatus() = RegionStatus(
         completedResourceCount = completedResourceCount,

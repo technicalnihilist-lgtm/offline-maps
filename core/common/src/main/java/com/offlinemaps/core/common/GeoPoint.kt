@@ -18,8 +18,6 @@ data class GeoPoint(
         require(longitude.isFinite() && longitude in -180.0..180.0) { "longitude out of range: $longitude" }
     }
 
-    fun isValid(): Boolean = latitude in -90.0..90.0 && longitude in -180.0..180.0
-
     /** Human readable coordinate string, e.g. "18.520430, 73.856744". */
     fun format(decimals: Int = 6): String = String.format(
         Locale.US, "%.${decimals}f, %.${decimals}f", latitude, longitude,
@@ -37,10 +35,6 @@ data class GeoPoint(
         "https://www.openstreetmap.org/?mlat=%.6f&mlon=%.6f#map=%d/%.6f/%.6f",
         latitude, longitude, zoom, latitude, longitude,
     )
-
-    companion object {
-        val ZERO = GeoPoint(0.0, 0.0)
-    }
 }
 
 /** Bounding box in degrees. [south] <= [north]; antimeridian-crossing boxes are not represented. */
@@ -61,9 +55,6 @@ data class GeoBounds(
 
     fun contains(p: GeoPoint): Boolean = p.latitude in south..north && p.longitude in west..east
 
-    fun intersects(other: GeoBounds): Boolean =
-        !(other.west > east || other.east < west || other.south > north || other.north < south)
-
     fun expandedBy(meters: Double): GeoBounds {
         val dLat = meters / 111_320.0
         val cosLat = kotlin.math.cos(Math.toRadians(center.latitude)).coerceAtLeast(1e-6)
@@ -77,8 +68,6 @@ data class GeoBounds(
     }
 
     companion object {
-        val WORLD = GeoBounds(-85.05112878, -180.0, 85.05112878, 180.0)
-
         fun of(points: Iterable<GeoPoint>): GeoBounds? {
             val it = points.iterator()
             if (!it.hasNext()) return null

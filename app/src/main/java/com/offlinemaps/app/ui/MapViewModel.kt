@@ -247,11 +247,6 @@ class MapViewModel(private val locator: ServiceLocator) : ViewModel() {
 
     fun setBearing(bearing: Float) = _state.update { it.copy(bearing = bearing) }
 
-    fun toggleTerrain() {
-        val enabled = !_state.value.terrainEnabled
-        locator.settings.update { it.copy(terrainEnabled = enabled) }
-    }
-
     fun setSearchQuery(query: String) {
         _state.update { it.copy(searchQuery = query) }
         if (query.trim().length < SEARCH_MIN_QUERY_LENGTH) {

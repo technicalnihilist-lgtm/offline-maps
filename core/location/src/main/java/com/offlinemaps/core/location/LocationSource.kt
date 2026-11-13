@@ -38,12 +38,6 @@ class LocationSource(private val context: Context) {
         manager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
     }.getOrDefault(false)
 
-    fun isAnyProviderEnabled(): Boolean = runCatching {
-        manager?.let { m ->
-            m.isProviderEnabled(LocationManager.GPS_PROVIDER) || m.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-        } == true
-    }.getOrDefault(false)
-
     /** Last known fix, useful to centre the map instantly without waiting for a cold GPS lock. */
     fun lastKnown(): LocationFix? {
         if (!hasPermission()) return null
