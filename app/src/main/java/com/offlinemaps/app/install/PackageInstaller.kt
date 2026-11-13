@@ -5,6 +5,7 @@ import android.util.Log
 import com.offlinemaps.app.di.ServiceLocator
 import com.offlinemaps.core.common.MapPackageType
 import com.offlinemaps.core.offline.ZipExtractor
+import com.offlinemaps.core.routing.GraphInstallTransaction
 import com.offlinemaps.core.routing.RoutingGraphPackage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -82,25 +83,44 @@ class PackageInstaller(
         }
         onProgress("Unpacking routing graph")
         val graphDir = locator.routingEngine.graphDirectory()
-        graphDir.deleteRecursively()
-        graphDir.mkdirs()
-        try {
-            // Streamed through one reused 64 KiB buffer: a graph package is hundreds of files and
-            // hundreds of megabytes, and nothing here may be sized from the archive.
-            ZipExtractor.extract(file, graphDir)
-        } catch (e: Throwable) {
-            Log.e(TAG, "routing package unzip failed", e)
-            return InstallResult.Failure("The routing package is not a valid graph archive.")
+        // Unpacked beside the live graph and swapped in only once it has passed its checks
+        // (I-07): a process killed mid-unpack, or a package that is not a graph, must not take a
+        // graph that was working away with it.
+        val staged = GraphInstallTransaction.stage(graphDir) { staging ->
+            runCatching {
+                // Streamed through one reused 64 KiB buffer: a graph package is hundreds of files and
+                // hundreds of megabytes, and nothing here may be sized from the archive.
+                ZipExtractor.extract(file, staging)
+            }.mapCatching {
+                // The zip opened, but a package is not a graph just because it unzips (I-05): it can
+                // be a re-zipped tile archive, a truncated download or a graph built with another
+                // encoder set. Checked here, on the staged copy, so a rejected package is discarded
+                // instead of being left behind as a directory that looks installed.
+                val verdict = RoutingGraphPackage.inspect(staging)
+                if (verdict is RoutingGraphPackage.Verdict.Unusable) {
+                    throw RejectedRoutingPackage(verdict.problem)
+                }
+            }
         }
-        // The zip opened, but a package is not a graph just because it unzips (I-05): it can be a
-        // re-zipped tile archive, a truncated download or a graph built with another encoder set.
-        // Those are caught here so the region is not left with a directory that looks installed
-        // and fails on every later load.
-        val verdict = RoutingGraphPackage.inspect(graphDir)
-        if (verdict is RoutingGraphPackage.Verdict.Unusable) {
-            Log.w(TAG, "routing package for $regionId rejected: ${verdict.problem}")
-            graphDir.deleteRecursively()
-            return InstallResult.Failure(RoutingGraphPackage.describe(verdict.problem))
+        when (staged) {
+            is GraphInstallTransaction.StageResult.Rejected -> {
+                val reason = staged.reason
+                return if (reason is RejectedRoutingPackage) {
+                    Log.w(TAG, "routing package for $regionId rejected: ${reason.problem}")
+                    InstallResult.Failure(RoutingGraphPackage.describe(reason.problem))
+                } else {
+                    Log.e(TAG, "routing package unzip failed", reason)
+                    InstallResult.Failure("The routing package is not a valid graph archive.")
+                }
+            }
+            is GraphInstallTransaction.StageResult.SwapFailed -> {
+                Log.e(TAG, "routing package for $regionId could not be swapped in", staged.reason)
+                return InstallResult.Failure(
+                    "The routing package was unpacked but could not be installed. The map data " +
+                        "already on this device was left as it was.",
+                )
+            }
+            GraphInstallTransaction.StageResult.Published -> Unit
         }
         onProgress("Loading routing graph")
         return locator.routingEngine.load { phase -> onProgress(phase) }.fold(
@@ -246,3 +266,12 @@ class PackageInstaller(
         const val PLACES_TARGET = "places_andorra.jsonl"
     }
 }
+
+/**
+ * A staged routing package that unpacked but is not a graph this app can load.
+ *
+ * Carries the [RoutingGraphPackage.Problem] rather than a finished sentence, so the installer turns
+ * it into the same message it showed before the unpack moved to a staging directory (I-05).
+ */
+private class RejectedRoutingPackage(val problem: RoutingGraphPackage.Problem) :
+    IllegalStateException("routing package rejected: $problem")

@@ -25,6 +25,7 @@ import com.offlinemaps.core.offline.DownloadRequest
 import com.offlinemaps.core.offline.DownloadStore
 import com.offlinemaps.core.offline.PartialFileSweeper
 import com.offlinemaps.core.offline.SharedHttpClient
+import com.offlinemaps.core.routing.GraphInstallTransaction
 import com.offlinemaps.core.routing.RoutingEngine
 import com.offlinemaps.core.routing.RoutingMemoryPolicy
 import com.offlinemaps.core.search.SearchIndex
@@ -132,7 +133,7 @@ class ServiceLocator(anyContext: Context) {
         return File(base, "packages")
     }
 
-    val routingEngine: RoutingEngine by lazy { RoutingEngine(File(packagesDir, "routing/current")) }
+    val routingEngine: RoutingEngine by lazy { RoutingEngine(File(packagesDir, ROUTING_GRAPH_DIRECTORY)) }
 
     val navigationManager: com.offlinemaps.app.nav.NavigationManager by lazy {
         com.offlinemaps.app.nav.NavigationManager(this)
@@ -204,6 +205,10 @@ class ServiceLocator(anyContext: Context) {
         // Resolved without [packagesDir] so a device that has never downloaded anything does not
         // have the directory created for it just to look inside it.
         val directory = packagesRoot()
+        withContext(Dispatchers.IO) {
+            val recovery = settleInterruptedRoutingInstall()
+            if (recovery.changed) Log.i(TAG, "settled an interrupted routing install: $recovery")
+        }
         if (!directory.isDirectory) return
         PartialFileSweeper.sweep(directory) { baseName ->
             val key = packageKeyForFileName(baseName)
@@ -211,6 +216,19 @@ class ServiceLocator(anyContext: Context) {
             key == null || downloadRecords.find(key) != null
         }
     }
+
+    /**
+     * Settles the debris of a routing install the process did not survive (OPTIMIZATION.md I-07).
+     *
+     * An install unpacks beside the live graph and swaps the two with renames, so a kill can leave
+     * at most a stale `<name>.staging` directory or a graph parked in `<name>.previous`; the package
+     * that was live is renamed back if the swap was interrupted between its two renames. This runs
+     * on the same background pass as the partial-file sweep, after the first frame and before any
+     * install can be started from the downloads screen, and on a healthy device it finds nothing.
+     * It reads and renames directories only - it never unpacks, loads or validates a graph.
+     */
+    internal fun settleInterruptedRoutingInstall(): GraphInstallTransaction.Recovery =
+        GraphInstallTransaction.recover(File(packagesRoot(), ROUTING_GRAPH_DIRECTORY))
 
     /** The package key a package file name was built from, or null when it is not one of ours. */
     private fun packageKeyForFileName(fileName: String): String? {
@@ -263,6 +281,11 @@ class ServiceLocator(anyContext: Context) {
     companion object {
         /** Log tag for the search warm-up timings (OPTIMIZATION.md A-06). */
         private const val SEARCH_TAG = "SearchPrewarm"
+
+        private const val TAG = "ServiceLocator"
+
+        /** Path, under the packages root, of the live routing graph directory. */
+        private const val ROUTING_GRAPH_DIRECTORY = "routing/current"
     }
 }
 
