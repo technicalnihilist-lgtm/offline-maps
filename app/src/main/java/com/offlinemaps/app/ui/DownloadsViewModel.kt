@@ -74,8 +74,8 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
             locator.downloadManager.states.collect { states ->
                 _state.update { current ->
                     current.copy(
-                        progress = states.mapNotNullValues { it.value.progress },
-                        messages = states.mapNotNullValues { it.value.error },
+                        progress = progressByPackage(states),
+                        messages = errorsByPackage(states),
                     )
                 }
             }
@@ -213,7 +213,7 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
      * real measurement, not a guess. The byte total is the on-device estimate and is labelled as such.
      */
     private fun startTileRegion(region: RegionCatalogEntry) {
-        val key = tileKey(region)
+        val key = tileKeyFor(region.id)
         val estimate = TileRegionEstimator.estimateBytes(region.bounds, region.minZoom, region.maxZoom)
         val reason = StorageGuard.reasonFor(
             availableBytes = _state.value.availableBytes,
@@ -329,8 +329,6 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
         }
     }
 
-    private fun tileKey(region: RegionCatalogEntry) = "${region.id}-${MapPackageType.TILE_REGION.name}"
-
     /** Finds a MapLibre region by the region id stored in its metadata. */
     private suspend fun findTileRegion(regionId: String): OfflineRegion? =
         activeTileRegions.values.firstOrNull { String(it.metadata) == regionId }
@@ -385,7 +383,7 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
         viewModelScope.launch {
             if (region.type == MapPackageType.TILE_REGION) {
                 findTileRegion(region.regionId)?.let { locator.offlineRegions.deleteRegion(it) }
-                locator.downloadRecords.delete(tileKeyById(region.regionId))
+                locator.downloadRecords.delete(tileKeyFor(region.regionId))
             }
             locator.installedRegions.delete(region.regionId)
             locator.search.removeRegion(region.regionId)
@@ -393,20 +391,13 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
         }
     }
 
-    private fun tileKeyById(regionId: String) = "$regionId-${MapPackageType.TILE_REGION.name}"
-
     fun dismissBanner() = _state.update { it.copy(banner = null) }
 
     private fun installIfNeeded(record: DownloadRecord) {
         val file = record.localPath?.let { File(it) } ?: return
         if (!file.exists()) return
         if (record.type == MapPackageType.TILE_REGION) return
-        val alreadyInstalled = _state.value.installed.any {
-            it.regionId == record.regionId &&
-                ((record.type == MapPackageType.ROUTING_OSM && it.routingReady) ||
-                    (record.type == MapPackageType.PLACES_PACK && it.searchReady))
-        }
-        if (alreadyInstalled) return
+        if (isAlreadyInstalled(record, _state.value.installed)) return
         if (_state.value.messages.containsKey("install-${record.packageKey}")) return
 
         _state.update { it.copy(messages = it.messages + ("install-${record.packageKey}" to "Installing…")) }
@@ -463,23 +454,9 @@ class DownloadsViewModel(private val locator: ServiceLocator) : ViewModel() {
         }
     }
 
-    private fun extensionFor(type: MapPackageType): String = when (type) {
-        MapPackageType.ROUTING_OSM -> "osm.pbf"
-        MapPackageType.PLACES_PACK -> "jsonl.gz"
-        MapPackageType.MBTILES -> "mbtiles"
-        MapPackageType.TILE_REGION -> "tiles"
-    }
+    private fun extensionFor(type: MapPackageType): String = packageExtension(type)
 
     companion object {
         fun sizeLabel(bytes: Long): String = if (bytes > 0) Formatters.bytes(bytes) else "size from server"
     }
-}
-
-private inline fun <K, V, R> Map<K, V>.mapNotNullValues(transform: (Map.Entry<K, V>) -> R?): Map<K, R> {
-    val result = LinkedHashMap<K, R>(size)
-    for (entry in entries) {
-        val mapped = transform(entry)
-        if (mapped != null) result[entry.key] = mapped
-    }
-    return result
 }
