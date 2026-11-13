@@ -233,7 +233,7 @@ object MapStyleFactory {
             putJsonObject("layout") { put("line-cap", "round") }
             putJsonObject("paint") {
                 put("line-color", p.water)
-                put("line-width", expr("interpolate", arrayOf("linear"), 8, 0.5, 16, 2.5))
+                put("line-width", expr("interpolate", arrayOf("linear"), arrayOf("zoom"), 8, 0.5, 16, 2.5))
             }
         })
 
@@ -241,7 +241,7 @@ object MapStyleFactory {
             put("source", "osm"); put("source-layer", "boundary")
             putJsonObject("paint") {
                 put("line-color", p.boundary)
-                put("line-width", expr("interpolate", arrayOf("linear"), 2, 0.6, 8, 1.6))
+                put("line-width", expr("interpolate", arrayOf("linear"), arrayOf("zoom"), 2, 0.6, 8, 1.6))
                 put("line-dasharray", JsonArray(listOf(JsonPrimitive(2), JsonPrimitive(1))))
             }
         })
@@ -254,7 +254,7 @@ object MapStyleFactory {
                 put(
                     "line-width",
                     expr(
-                        "interpolate", arrayOf("linear"), 10,
+                        "interpolate", arrayOf("linear"), arrayOf("zoom"), 10,
                         expr(
                             "match", arrayOf("get", "class"),
                             arrayOf("motorway"), 2.0, arrayOf("trunk"), 1.8, arrayOf("primary"), 1.4,
@@ -282,7 +282,7 @@ object MapStyleFactory {
                 put(
                     "line-width",
                     expr(
-                        "interpolate", arrayOf("linear"), 10,
+                        "interpolate", arrayOf("linear"), arrayOf("zoom"), 10,
                         expr(
                             "match", arrayOf("get", "class"),
                             arrayOf("motorway"), 1.4, arrayOf("trunk"), 1.2, arrayOf("primary"), 1.0,
@@ -305,7 +305,7 @@ object MapStyleFactory {
             put("minzoom", 13)
             putJsonObject("paint") {
                 put("fill-color", p.building)
-                put("fill-opacity", expr("interpolate", arrayOf("linear"), 13, 0.0, 15, 0.7))
+                put("fill-opacity", expr("interpolate", arrayOf("linear"), arrayOf("zoom"), 13, 0.0, 15, 0.7))
             }
         })
 
@@ -355,7 +355,7 @@ object MapStyleFactory {
                 put(
                     "text-size",
                     expr(
-                        "interpolate", arrayOf("linear"), 3,
+                        "interpolate", arrayOf("linear"), arrayOf("zoom"), 3,
                         expr("match", arrayOf("get", "class"), arrayOf("country"), 15, arrayOf("state"), 12, 10),
                         8,
                         expr(
