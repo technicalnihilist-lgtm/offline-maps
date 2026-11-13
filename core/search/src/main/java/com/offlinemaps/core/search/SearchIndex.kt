@@ -2,6 +2,7 @@ package com.offlinemaps.core.search
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.offlinemaps.core.common.GeoBounds
@@ -173,12 +174,13 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         return readableDatabase.rawQuery(sql, arrayOf(terms, limit.toString())).use { cursor ->
             val out = ArrayList<PlaceResult>(cursor.count)
             while (cursor.moveToNext()) {
+                val point = pointOrNull(cursor) ?: continue
                 out.add(
                     PlaceResult(
                         id = cursor.getString(0),
                         name = cursor.getString(1),
                         type = cursor.getString(2),
-                        point = GeoPoint(cursor.getDouble(3), cursor.getDouble(4)),
+                        point = point,
                         address = listOfNotNull(
                             cursor.getString(6)?.takeIf { it.isNotBlank() },
                             cursor.getString(5)?.takeIf { it.isNotBlank() },
@@ -215,7 +217,7 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         val found = ArrayList<Pair<Double, PlaceResult>>(minOf(rowCap, 64))
         readableDatabase.rawQuery(NEARBY_BBOX_SQL, nearbyArgs(center, bounds, rowCap)).use { cursor ->
             while (cursor.moveToNext()) {
-                val point = GeoPoint(cursor.getDouble(3), cursor.getDouble(4))
+                val point = pointOrNull(cursor) ?: continue
                 val distance = GeoMath.distanceMeters(center, point)
                 if (distance > radiusMeters) continue
                 found.add(
@@ -231,6 +233,24 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             }
         }
         return found.sortedBy { it.first }.take(limit).map { it.second }
+    }
+
+    /**
+     * The row's coordinates as a [GeoPoint], or null when the row is outside the world.
+     *
+     * [PlacesPackReader] drops such a line before it is ever indexed (OPTIMIZATION.md I-08), so
+     * this only catches rows written by a build that did not: an index file already on a device
+     * from an older version. [GeoPoint] throws in its `init` for a latitude of 200, which would
+     * turn one bad row into a failed query over the whole region, so a row that cannot be trusted
+     * is skipped here instead - the same answer the reader would have given.
+     */
+    private fun pointOrNull(cursor: Cursor): GeoPoint? {
+        val lat = cursor.getDouble(3)
+        val lon = cursor.getDouble(4)
+        if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
+            return null
+        }
+        return GeoPoint(lat, lon)
     }
 
     fun deleteRegion(regionId: String) {

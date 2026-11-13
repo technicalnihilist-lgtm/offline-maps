@@ -25,6 +25,18 @@ data class PlaceRecord(
     val admin: String? = null,
     val street: String? = null,
 ) {
+    /**
+     * True when [lat]/[lon] are a real WGS84 position (OPTIMIZATION.md I-08).
+     *
+     * A pack line is text from a download, so it can carry a latitude of 200 or a longitude of
+     * 1e9 - or a value that is not a number at all. [GeoPoint] refuses those in its `init`, so a
+     * record that reached the index would throw when a search built a point from its row, and one
+     * bad line would take down every query over that region. The reader therefore treats such a
+     * line as damage and skips it, the same way it skips a line that is not JSON.
+     */
+    fun hasValidPoint(): Boolean =
+        lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
+
     fun toPoint() = GeoPoint(lat, lon)
 }
 
@@ -41,7 +53,10 @@ class PlacesPackStats {
     var records: Int = 0
         internal set
 
-    /** Non-blank lines that could not be decoded, or decoded without a name. */
+    /**
+     * Non-blank lines that could not be decoded, decoded without a name, or carried a coordinate
+     * outside the world (|lat| > 90, |lon| > 180, or not finite).
+     */
     var skippedLines: Int = 0
         internal set
 
@@ -60,10 +75,13 @@ object PlacesPackReader {
      * Reads a pack of one JSON record per line, gzipped or plain.
      *
      * A damaged pack no longer takes the whole read down. A line that is not JSON - including the
-     * half-written last line of a truncated file - is skipped and counted, and a stream that fails
-     * part-way (a gzip body that ends before its trailer) ends the sequence after the records that
-     * did decode, with [PlacesPackStats.truncated] set. Only a stream whose *header* cannot be read
-     * throws, because nothing at all is recoverable from it.
+     * half-written last line of a truncated file - is skipped and counted, as is a line whose
+     * coordinate is outside the world (|lat| > 90, |lon| > 180, or not finite), which would
+     * otherwise throw from `GeoPoint` the first time a search read that row back
+     * (OPTIMIZATION.md I-08). A stream that fails part-way (a gzip body that ends before its
+     * trailer) ends the sequence after the records that did decode, with
+     * [PlacesPackStats.truncated] set. Only a stream whose *header* cannot be read throws, because
+     * nothing at all is recoverable from it.
      */
     fun read(input: InputStream, stats: PlacesPackStats = PlacesPackStats()): Sequence<PlaceRecord> = sequence {
         val stream = input.buffered()
@@ -85,7 +103,7 @@ object PlacesPackReader {
                 } ?: break
                 if (line.isBlank()) continue
                 val record = runCatching { json.decodeFromString(PlaceRecord.serializer(), line) }.getOrNull()
-                if (record == null || record.name.isBlank()) {
+                if (record == null || record.name.isBlank() || !record.hasValidPoint()) {
                     stats.skippedLines++
                     continue
                 }

@@ -115,6 +115,27 @@ class SearchIndexTest {
     }
 
     @Test
+    fun `search skips a row whose coordinate is outside the world`() {
+        index.importPack("andorra", writePack(listOf(PlaceRecord("n1", "Ordino", "town", 42.5562, 1.5335))))
+        // A row written by an older build, before the pack reader rejected out-of-range
+        // coordinates (OPTIMIZATION.md I-08). GeoPoint refuses it, so reading it back must not
+        // throw and must not cost the sound row beside it.
+        index.writableDatabase.execSQL(
+            "INSERT INTO places (id, name, type, lat, lon, region_id, weight) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            arrayOf<Any>("bad", "Ordino Observatory", "town", 200.0, 1.5, "andorra", 50),
+        )
+        index.writableDatabase.execSQL(
+            "INSERT INTO places_fts (rowid, name, admin, street) " +
+                "VALUES ((SELECT rowid FROM places WHERE id = 'bad'), ?, '', '')",
+            arrayOf<Any>("Ordino Observatory"),
+        )
+
+        val results = index.search("Ordino")
+
+        assertEquals(listOf("Ordino"), results.map { it.name })
+    }
+
+    @Test
     fun `prefix search finds a place by its first letters`() {
         index.importPack("andorra", writePack(listOf(PlaceRecord("n1", "Andorra la Vella", "town", 42.5069, 1.5212))))
         val results = index.search("Andor")

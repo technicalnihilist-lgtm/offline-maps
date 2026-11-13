@@ -83,6 +83,31 @@ class PlacesPackReaderTest {
     }
 
     @Test
+    fun `a record with a coordinate outside the world is skipped`() {
+        val text = record(1) + "\n" +
+            """{"id":"bad1","name":"Impossible latitude","type":"town","lat":91.0,"lon":1.5}""" + "\n" +
+            """{"id":"bad2","name":"Impossible longitude","type":"town","lat":42.5,"lon":180.5}""" + "\n" +
+            record(2) + "\n"
+        val stats = PlacesPackStats()
+        val records = read(gzip(text), stats)
+        assertEquals(listOf("Place number 1 of Andorra", "Place number 2 of Andorra"), records.map { it.name })
+        assertEquals(2, stats.skippedLines)
+        assertEquals(2, stats.records)
+        assertTrue(stats.damaged)
+    }
+
+    @Test
+    fun `the poles and the antimeridian are still in range`() {
+        val text = """{"id":"p1","name":"North pole","type":"place","lat":90.0,"lon":180.0}""" + "\n" +
+            """{"id":"p2","name":"South pole","type":"place","lat":-90.0,"lon":-180.0}""" + "\n"
+        val stats = PlacesPackStats()
+        val records = read(text.toByteArray(), stats)
+        assertEquals(listOf("North pole", "South pole"), records.map { it.name })
+        assertEquals(0, stats.skippedLines)
+        assertFalse(stats.damaged)
+    }
+
+    @Test
     fun `a gzip body that ends early keeps the records that decoded`() {
         val full = gzip(packText(300))
         val truncated = full.copyOf(full.size / 2)
