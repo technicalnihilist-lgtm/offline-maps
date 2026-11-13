@@ -46,10 +46,12 @@ class DownloadsStateMappingTest {
     }
 
     @Test
-    fun `mapNotNullValues can key off the entry key`() {
-        val mapped = mapOf("pkg" to "err").mapNotNullValues { "${it.key}!" to it.value }
+    fun `mapNotNullValues can decide on the entry key rather than the value`() {
+        val mapped = mapOf("pkg-tiles" to "err", "other" to "err").mapNotNullValues {
+            if (it.key.startsWith("pkg")) it.value.uppercase() else null
+        }
 
-        assertThat(mapped).containsExactly("pkg!", "err")
+        assertThat(mapped).containsExactly("pkg-tiles", "ERR")
     }
 
     // --- the two state maps -----------------------------------------------------------------
