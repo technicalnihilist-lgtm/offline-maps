@@ -67,7 +67,7 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **657 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Unit tests | **662 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
@@ -238,10 +238,11 @@ what could not run here. Summary of the automated suites:
 * `core/location` — location source, permission copy, rationale state (**33**)
 * `core/data` — Room repositories and settings (**14**)
 * `app` — download and view-model state mapping, routing and navigation glue, and the static audits
-  that hold startup I/O, imports, logging, the CI workflow and these docs in place (**149**)
+  that hold startup I/O, imports, logging, the CI workflow, the Room schema export ordering and
+  these docs in place (**154**)
 
-Total: **657 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
-per variant — `./gradlew test` runs each module's debug and release suites, so 1,314 executions.
+Total: **662 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,324 executions.
 `core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
 reach.
 
