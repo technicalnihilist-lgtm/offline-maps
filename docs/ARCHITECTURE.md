@@ -10,8 +10,7 @@ app ──► core:ui, core:data, core:map, core:offline, core:search, core:rout
 
 * `core:common` has no Android dependencies at all (except `System.currentTimeMillis`), so all
   geometry and tile maths is unit-testable on the JVM.
-* `core:map`, `core:routing`, `core:location`, `core:search` each depend only on `core:common`
-  (`core:search` also on `core:data` for nothing but types).
+* `core:map`, `core:routing`, `core:location`, `core:search` each depend only on `core:common`.
 * `app` is the only module that knows about Android UI, services and DI.
 
 ## Key components
@@ -28,6 +27,10 @@ app ──► core:ui, core:data, core:map, core:offline, core:search, core:rout
 | `GuidanceAnnouncer` | decides when to speak (threshold buckets, no repeats, arrival, reroute, GPS loss) |
 | `NavigationManager` | owns the live loop, rerouting, speech; drives both UI and the notification |
 | `SearchIndex` | SQLite FTS4 index over places packs, injection-safe prefix queries, nearby bbox queries |
+
+`DocsConsistencyTest` (in `app`) is not a component of the app: it counts the `@Test` methods in the
+tree and checks the totals and asset paths quoted in the README and `docs/` against them, so the
+documentation cannot drift from the code without failing the build.
 
 ## Threading
 

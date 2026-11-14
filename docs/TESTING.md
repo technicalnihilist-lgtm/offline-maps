@@ -3,34 +3,35 @@
 Executed on **GitHub Actions** (Ubuntu runner, JDK 17 Temurin, Android SDK platform 35,
 build-tools 34.0.0, Gradle 8.9 wrapper).
 
-Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/40901142334> — **success**
+## Automated tests — 652 tests, 0 failures
 
-## Automated tests — 99 tests, 0 failures
+| Module | Tests |
+|---|---|
+| `app` | 144 |
+| `core/common` | 37 |
+| `core/map` | 129 |
+| `core/offline` | 122 |
+| `core/routing` | 115 |
+| `core/search` | 58 |
+| `core/location` | 33 |
+| `core/data` | 14 |
+| `core/ui` | 0 |
+| **total** | **652** |
 
-| Module | Suite | Tests |
-|---|---|---|
-| `core/common` | `GeoMathTest` | 13 |
-| `core/common` | `TileMathTest` | 7 |
-| `core/common` | `FormattersTest` | 8 |
-| `core/offline` | `DownloadManagerTest` | 11 |
-| `core/offline` | `StorageAndVerificationTest` | 10 |
-| `core/routing` | `NavigationTrackerTest` | 10 |
-| `core/routing` | `GuidanceAnnouncerTest` | 6 |
-| `core/routing` | `InstructionMapperTest` | 6 |
-| `core/routing` | `RoutingEngineIntegrationTest` | 6 |
-| `core/search` | `SearchIndexTest` | 12 |
-| `core/data` | `RepositoryTest` | 10 |
-| `core/map` | `StyleFileWriterTest` | 5 |
-| | **total** | **106** |
+Counts are read from the Gradle HTML report artifacts of the run (`testDebugUnitTest`), and each
+number is the number of `@Test` methods in that module: `DocsConsistencyTest` counts them in the
+tree and fails if either this table's total or the README's disagrees with it. `./gradlew test` runs
+`testDebugUnitTest` and `testReleaseUnitTest`, so every count above is executed twice — 1,304 test
+executions — and both variants must be green.
 
-Counts are read from the Gradle HTML report artifacts of that run (`testDebugUnitTest`).
-`core/map`, `core/location` and `core/ui` currently have no unit tests of their own — their logic is
-either Android-view glue or covered indirectly.
+`core/ui` has no unit tests of its own: it is Compose design-system code (theme, panels, chips,
+progress rows) with no logic a JVM test can reach without a device. Everything else is covered,
+including the static audits in `app`: startup I/O, unused imports, the logging convention, and the
+numbers on this page.
 
-Build: `./gradlew :app:assembleDebug` → **success**. Artifact `app-debug-apk` = 38,594,710 bytes
-zipped, 67,483,772 bytes installed: 22 dex files, 393 entries, native libraries for
-`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, APK Signature Scheme v2/v3 block present,
-SHA-256 `6b6cf1d2f41a74f214ff9599175cc49315db663496909299b3b8d1bfdcea1fb2`.
+Build: `./gradlew :app:assembleDebug` → **success** on the same run, artifact `app-debug-apk`. Its
+size and digest change with every commit, so they are not quoted here; download the artifact from
+the run, or the APK from the latest release, and check it yourself.
 
 ## Bugs the tests caught (all fixed)
 

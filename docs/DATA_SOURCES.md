@@ -5,7 +5,8 @@
 | OpenStreetMap vector tiles (OpenMapTiles schema) | OpenFreeMap (`tiles.openfreemap.org`) | OSM data ODbL 1.0; service free, no key | online map browsing, offline region caching |
 | Terrarium elevation tiles | Mapzen / AWS Open Data (`elevation-tiles-prod`) | open data, attribution to Mapzen | terrain, hillshade, 3D relief |
 | OSM extracts | Geofabrik (`download.geofabrik.de`) | ODbL 1.0 | routing graphs, places packs |
-| Bundled Andorra extract | OpenStreetMap contributors | ODbL 1.0 | bundled sample region + routing integration test |
+| Bundled Andorra routing graph (`assets/routing_andorra.zip`) | OpenStreetMap contributors, built with `tools/build_routing_graph.sh` | ODbL 1.0 | bundled sample region + routing integration test |
+| Bundled places pack (`assets/places_andorra.jsonl.gz`) | generated from the same extract by `tools/build_places_pack.py` | ODbL 1.0 | offline search of the sample region |
 
 Required attribution (shown in Settings and in the map attribution control):
 "© OpenStreetMap contributors · OpenFreeMap · Terrain: Mapzen/AWS Open Data".

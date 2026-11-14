@@ -60,7 +60,10 @@ this already.
   machine with ≥4 GB RAM.
 * **`robolectric.graphicsMode`** must stay `LEGACY` for headless CI, otherwise the test JVM aborts
   in the native graphics loader.
-* **`testImplementation("org.robolectric:nativeruntime-dist-compat")`** is pinned in the search and
-  data modules so SQLite works in tests.
+* **No `nativeruntime-dist-compat` pin.** One was added to the search and data modules and then
+  removed: Robolectric 4.13 brings its own, and a mismatched pin aborts the test JVM with exit code
+  134 (`unable to find class BitmapRegionDecoderNatives`). Do not add one back.
+* **`./gradlew lint` is not part of CI.** It runs locally; wiring it into the workflow is J-08 in
+  `OPTIMIZATION.md`.
 * If Gradle cannot resolve dependencies, check the `repositories` block in `settings.gradle.kts`
   and your proxy configuration; a mirror can be added next to `mavenCentral()`.
