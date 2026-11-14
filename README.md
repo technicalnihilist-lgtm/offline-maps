@@ -67,7 +67,7 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **652 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Unit tests | **657 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
@@ -238,10 +238,10 @@ what could not run here. Summary of the automated suites:
 * `core/location` — location source, permission copy, rationale state (**33**)
 * `core/data` — Room repositories and settings (**14**)
 * `app` — download and view-model state mapping, routing and navigation glue, and the static audits
-  that hold startup I/O, imports, logging and these docs in place (**144**)
+  that hold startup I/O, imports, logging, the CI workflow and these docs in place (**149**)
 
-Total: **652 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
-per variant — `./gradlew test` runs each module's debug and release suites, so 1,304 executions.
+Total: **657 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,314 executions.
 `core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
 reach.
 
@@ -252,9 +252,11 @@ reach.
 * `tools/build_places_pack.py` — turns any `.osm.pbf` into an offline places pack
   (`pip install osmium`, then `python3 tools/build_places_pack.py region.osm.pbf out.jsonl.gz`).
 * `docs/` — architecture, building, testing, limitations.
-* `.github/workflows/android.yml` — `./gradlew test`, then `:app:assembleDebug`, on every push to
-  `main` and every pull request; the test reports and the debug APK are uploaded as artifacts. Lint
-  is not wired into CI yet — run it locally with `./gradlew lint` (J-08 in `OPTIMIZATION.md`).
+* `.github/workflows/android.yml` — `./gradlew test`, then `tools/verify_test_results.sh` (every
+  module with test sources must have reported results, so a suite that never ran cannot pass),
+  then `:app:assembleDebug`, on every push to `main` and every pull request; the test reports and the
+  debug APK are uploaded as artifacts. Lint is not wired into CI yet — run it locally with
+  `./gradlew lint` (J-08 in `OPTIMIZATION.md`).
 
 ## Licence
 

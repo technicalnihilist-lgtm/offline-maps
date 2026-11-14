@@ -7,11 +7,11 @@ Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/435624
 (The commit that last edited this page changes documentation only, so the counts below are unchanged;
 the badge on the README links the latest run.)
 
-## Automated tests — 652 tests, 0 failures
+## Automated tests — 657 tests, 0 failures
 
 | Module | Tests |
 |---|---|
-| `app` | 144 |
+| `app` | 149 |
 | `core/common` | 37 |
 | `core/map` | 129 |
 | `core/offline` | 122 |
@@ -20,18 +20,19 @@ the badge on the README links the latest run.)
 | `core/location` | 33 |
 | `core/data` | 14 |
 | `core/ui` | 0 |
-| **total** | **652** |
+| **total** | **657** |
 
 Counts are read from the Gradle HTML report artifacts of the run (`testDebugUnitTest`), and each
 number is the number of `@Test` methods in that module: `DocsConsistencyTest` counts them in the
 tree and fails if either this table's total or the README's disagrees with it. `./gradlew test` runs
-`testDebugUnitTest` and `testReleaseUnitTest`, so every count above is executed twice — 1,304 test
-executions — and both variants must be green.
+`testDebugUnitTest` and `testReleaseUnitTest`, so every count above is executed twice — 1,314 test
+executions — and both variants must be green. The CI run also checks that: `tools/verify_test_results.sh`
+fails the job when a module that carries test sources reported no results (OPTIMIZATION.md J-07).
 
 `core/ui` has no unit tests of its own: it is Compose design-system code (theme, panels, chips,
 progress rows) with no logic a JVM test can reach without a device. Everything else is covered,
-including the static audits in `app`: startup I/O, unused imports, the logging convention, and the
-numbers on this page.
+including the static audits in `app`: startup I/O, unused imports, the logging convention, the CI
+workflow, and the numbers on this page.
 
 Build: `./gradlew :app:assembleDebug` → **success** on the same run, artifact `app-debug-apk`. Its
 size and digest change with every commit, so they are not quoted here; download the artifact from

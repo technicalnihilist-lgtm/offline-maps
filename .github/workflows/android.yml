@@ -45,6 +45,13 @@ jobs:
       - name: Unit tests
         run: ./gradlew test --stacktrace --no-daemon
 
+      # OPTIMIZATION.md J-07. `./gradlew test` fails on a failing test, but it stays green when a
+      # module's tests never run - a misplaced test source set, a dropped `src/test`, a skipped
+      # task. This step refuses that: every module included in settings.gradle.kts that carries test
+      # sources must have written test results in this run, and they must report a non-zero count.
+      - name: Verify every module's tests ran
+        run: bash tools/verify_test_results.sh
+
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
