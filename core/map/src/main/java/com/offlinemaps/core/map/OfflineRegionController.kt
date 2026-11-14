@@ -171,6 +171,7 @@ class OfflineRegionController(private val context: Context) {
     )
 
     private companion object {
-        const val TAG = "OfflineRegion"
+        /** The class name, so a logcat line names the file it came from (OPTIMIZATION.md J-05). */
+        const val TAG = "OfflineRegionController"
     }
 }

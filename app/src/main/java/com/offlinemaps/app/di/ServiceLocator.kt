@@ -98,7 +98,7 @@ class ServiceLocator(anyContext: Context) {
     }
 
     private fun logSearchTiming(line: String) {
-        if (debugBuild) Log.d(SEARCH_TAG, line)
+        if (debugBuild) Log.d(TAG, line)
     }
 
     /**
@@ -280,9 +280,13 @@ class ServiceLocator(anyContext: Context) {
     }
 
     companion object {
-        /** Log tag for the search warm-up timings (OPTIMIZATION.md A-06). */
-        private const val SEARCH_TAG = "SearchPrewarm"
-
+        /**
+         * The one log tag this class logs under (OPTIMIZATION.md J-05).
+         *
+         * The search warm-up timings (A-06) used to go out under a second tag, `SearchPrewarm`;
+         * they share this one now, and stay recognisable by the `search prewarm:` and `search:`
+         * prefixes the messages already carry.
+         */
         private const val TAG = "ServiceLocator"
 
         /** Path, under the packages root, of the live routing graph directory. */
