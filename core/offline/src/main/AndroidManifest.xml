@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- `AndroidNetworkStateProvider` reads the active network and registers a callback, which the
+         platform gates on ACCESS_NETWORK_STATE. The app module declares it too - this is the same
+         permission, merged, not a second one - but keeping the declaration with the code that needs
+         it lets lint check this module on its own instead of reporting the calls as unguarded
+         (OPTIMIZATION.md J-08). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+</manifest>
