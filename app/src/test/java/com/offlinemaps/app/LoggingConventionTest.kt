@@ -235,7 +235,9 @@ class LoggingConventionTest {
         val starts = listOfNotNull(
             File("").absoluteFile,
             runCatching {
-                File(javaClass.protectionDomain.codeSource.location.toURI()).absoluteFile
+                val location = javaClass.protectionDomain?.codeSource?.location
+                    ?: return@runCatching null
+                File(location.toURI()).absoluteFile
             }.getOrNull(),
         )
         for (start in starts) {
@@ -254,7 +256,7 @@ class LoggingConventionTest {
     private fun mainSources(root: File): List<File> = root.walkTopDown()
         .onEnter { it.name != "build" && it.name != ".git" }
         .filter { it.isFile && it.extension == "kt" }
-        .filter { it.parentFile.path.replace(File.separatorChar, '/').contains("/src/main") }
+        .filter { it.parentFile?.path?.replace(File.separatorChar, '/')?.contains("/src/main") == true }
         .toList()
 
     private companion object {
