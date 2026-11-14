@@ -3,6 +3,10 @@
 Executed on **GitHub Actions** (Ubuntu runner, JDK 17 Temurin, Android SDK platform 35,
 build-tools 34.0.0, Gradle 8.9 wrapper).
 
+Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/43562472266> - **success**.
+(The commit that last edited this page changes documentation only, so the counts below are unchanged;
+the badge on the README links the latest run.)
+
 ## Automated tests — 652 tests, 0 failures
 
 | Module | Tests |
