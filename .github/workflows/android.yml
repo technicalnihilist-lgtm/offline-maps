@@ -52,6 +52,15 @@ jobs:
       - name: Verify every module's tests ran
         run: bash tools/verify_test_results.sh
 
+      # OPTIMIZATION.md J-08. Lint was configured in the build but never run here, so nothing the
+      # lint checks report - an API used above `minSdk`, a permission declared and never held, a
+      # resource nothing references - could fail a build. This step makes `lintDebug` a gate: it
+      # runs the debug variant of every module, and lint's own error severity (the default, which
+      # `:app` had switched off with `abortOnError = false`) stops the run. Warnings are reported
+      # and do not fail it.
+      - name: Android lint
+        run: ./gradlew lintDebug --stacktrace --no-daemon
+
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
@@ -61,6 +70,14 @@ jobs:
         with:
           name: test-reports
           path: '**/build/reports/tests/'
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: '**/build/reports/lint-results-*.html'
+          if-no-files-found: warn
 
       - name: Upload debug APK
         if: always()

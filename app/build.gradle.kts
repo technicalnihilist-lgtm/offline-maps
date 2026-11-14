@@ -13,8 +13,8 @@ android {
         applicationId = "com.offlinemaps.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 75
-        versionName = "1.0.74"
+        versionCode = 76
+        versionName = "1.0.75"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -67,7 +67,10 @@ android {
         }
     }
     testOptions { unitTests { isIncludeAndroidResources = true; isReturnDefaultValues = true } }
-    lint { abortOnError = false }
+    // OPTIMIZATION.md J-08. Lint runs in CI now and is a gate there, so this module uses the same
+    // policy as the library modules: an error stops the build, a warning is reported and does not.
+    // `abortOnError = false` here is why nothing lint reported could ever fail a run.
+    lint { abortOnError = true }
 }
 
 dependencies {
