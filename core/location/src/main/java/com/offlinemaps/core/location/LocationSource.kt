@@ -1,6 +1,7 @@
 package com.offlinemaps.core.location
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -39,6 +40,10 @@ class LocationSource(private val context: Context) {
     }.getOrDefault(false)
 
     /** Last known fix, useful to centre the map instantly without waiting for a cold GPS lock. */
+    // Lint cannot follow the permission through `hasPermission()`, so it reports the guarded call
+    // below as unguarded (OPTIMIZATION.md J-08). The guard is the first line of the body and is the
+    // same one every other reader of `manager` goes through.
+    @SuppressLint("MissingPermission")
     fun lastKnown(): LocationFix? {
         if (!hasPermission()) return null
         val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
@@ -137,6 +142,9 @@ private class Registration(
      * Registers [provider], unless it is disabled or the platform refuses the request; returns true
      * when the platform accepted the request.
      */
+    // Called only from `LocationSource.updates`, after the permission check at its top, which lint
+    // cannot follow across the class boundary (OPTIMIZATION.md J-08).
+    @SuppressLint("MissingPermission")
     fun request(provider: String, minTimeMs: Long, minDistanceMeters: Float): Boolean {
         if (released) return false
         val enabled = runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
