@@ -33,6 +33,14 @@ class RoutingEngine(private val graphRoot: File) {
     private var loadedProfiles: List<TravelProfile> = emptyList()
 
     /**
+     * The graph files the live [hopper] was read from (J-10). Null while nothing is loaded.
+     *
+     * The no-reload shortcut in [loadLocked] is only sound if the files on disk are still the ones
+     * that were imported, and an install replaces them in place.
+     */
+    private var loadedFingerprint: GraphFingerprint? = null
+
+    /**
      * The profile set the last [load] asked for. Remembered so a graph that was released by a
      * memory trim (or that this process has not loaded yet) comes back with the same profiles.
      */
@@ -88,15 +96,26 @@ class RoutingEngine(private val graphRoot: File) {
     ): Result<Unit> {
         val existing = hopper
         if (existing != null) {
-            if (ProfileSet.matches(existing.profiles.map { it.name }, profiles)) {
-                // Nothing to do: the graph already serves exactly this profile set, so it is not
-                // closed and re-imported (E-02).
+            // Nothing to do only when the graph in memory serves exactly this profile set (E-02)
+            // *and* came from the files that are on disk now: installing a routing package swaps a
+            // new graph directory in at the same path, and the profile set is unchanged, so
+            // without the fingerprint the engine would keep answering from the old graph until the
+            // process restarted (J-10).
+            //
+            // A directory with nothing readable in it is not evidence of a new graph: there is
+            // nothing to import, and closing the live one would only leave routing dead, so the
+            // graph in memory is kept - the behaviour this shortcut always had.
+            val onDisk = GraphFingerprint.of(graphRoot)
+            if (ProfileSet.matches(existing.profiles.map { it.name }, profiles) &&
+                (onDisk == null || onDisk == loadedFingerprint)
+            ) {
                 loadedProfiles = profiles
                 return Result.success(Unit)
             }
             runCatching { existing.close() }
             hopper = null
             loadedProfiles = emptyList()
+            loadedFingerprint = null
         }
         if (!hasGraph()) {
             return Result.failure(
@@ -127,6 +146,9 @@ class RoutingEngine(private val graphRoot: File) {
             h.importOrLoad()
             hopper = h
             loadedProfiles = profiles
+            // Recorded after the import, so anything the load itself touched is part of what is
+            // compared next time and a repeated load still finds its shortcut.
+            loadedFingerprint = GraphFingerprint.of(graphRoot)
             onProgress("Routing ready")
             Result.success(Unit)
         } catch (e: OutOfMemoryError) {
@@ -146,6 +168,7 @@ class RoutingEngine(private val graphRoot: File) {
         hopper?.close()
         hopper = null
         loadedProfiles = emptyList()
+        loadedFingerprint = null
     }
 
     /**
