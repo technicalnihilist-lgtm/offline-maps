@@ -67,8 +67,8 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **99 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
-| Debug APK | **Built by CI and published** on the [v1.0.0 release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/tag/v1.0.0) |
+| Unit tests | **652 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
 ### Honest limitations
@@ -82,7 +82,7 @@ This section is first on purpose. Read it before anything else.
 * **Building heights are partly estimated.** Where OpenStreetMap has `height`/`levels` we use them;
   otherwise the style falls back to 3 m per level and then 4 m. These are estimates and the UI does
   not pretend otherwise. There is no photorealistic 3D city model anywhere in this app.
-* **Routing speed models are simplified.** GraphHopper 10 requires an explicit custom model per
+* **Routing speed models are simplified.** GraphHopper 2.4 requires an explicit custom model per
   profile; ours caps speed by road class and honours `maxspeed` when tagged. It is not a
   lane-level traffic model.
 * **Offline map tiles and offline routing are separate downloads.** Tiles make the *map* work with no
@@ -121,7 +121,7 @@ Key decisions and why:
 * **MapLibre Native 11.5.2** — open source, no API key, real vector rendering with `fill-extrusion`
   and `raster-dem` terrain. Style is *generated in Kotlin* so themes/quality/3D toggles do not need
   duplicate asset files.
-* **GraphHopper 10 core, on device** — pure JVM, so it runs on Android with no NDK build and no
+* **GraphHopper 2.4 core, on device** — pure JVM, so it runs on Android with no NDK build and no
   native toolchain in CI. Measured here: importing the Andorra extract took ~13.8 s and reloading
   the persisted graph ~0.3 s.
 * **Room** for user data, **plain SQLiteOpenHelper + FTS4** for the search index (bulk import is
@@ -145,8 +145,9 @@ MapLibre `mergeOfflineRegions`. State is persisted in Room so a killed process r
 | Vector tiles (online browsing) | [OpenFreeMap](https://openfreemap.org) (OpenMapTiles schema) | ODbL 1.0 data, free service |
 | Terrain DEM | Mapzen/AWS Open Data "Terrarium" elevation tiles | open data (AWS Open Data registry) |
 | Routing extracts | [Geofabrik](https://download.geofabrik.de) OSM extracts | ODbL 1.0 |
-| Bundled sample (`assets/sample_andorra.osm.pbf`) | OpenStreetMap, Andorra extract | ODbL 1.0, © OpenStreetMap contributors |
+| Bundled routing graph (`assets/routing_andorra.zip`) | built from an OpenStreetMap Andorra extract by `tools/build_routing_graph.sh` | ODbL 1.0, © OpenStreetMap contributors |
 | Places pack (`assets/places_andorra.jsonl.gz`) | generated from that extract by `tools/build_places_pack.py` | ODbL 1.0 |
+| Region catalogue (`assets/regions.json`) | hand-written bounding boxes and zoom ranges, no third-party data | project data |
 
 Attribution is shown in the app's Settings screen and must be preserved if you redistribute map
 data. No proprietary dataset (Google, Apple, HERE) is used or accessed.
@@ -183,13 +184,14 @@ Details, proxy/CI hints and troubleshooting: [`docs/BUILDING.md`](docs/BUILDING.
 ## Using the app
 
 1. First launch: the map loads online vector tiles (no key needed). Nothing is uploaded.
-2. **Explore** → "Install sample region" builds a real routing graph and search index from the
-   bundled Andorra extract — works in airplane mode afterwards.
+2. **Explore** → "Install sample region" unpacks the bundled Andorra routing graph and builds the
+   search index from the bundled places pack — works in airplane mode afterwards. It does not parse
+   a raw OSM extract; a phone cannot do that (see the limitation above).
 3. **Downloads** → pick a region and tap *Download* to cache its map tiles for offline viewing.
    Progress comes from MapLibre's own resource counter, and pause / resume / cancel / delete all work.
-   Sixteen regions ship in the catalogue (nine Indian cities, India as a whole, plus Singapore, London,
-   Paris, New York and Tokyo); sizes are computed on device from the bounding box and zoom range and
-   labelled as estimates.
+   Sixteen regions ship in the catalogue (nine Indian cities, India as a whole, the bundled Andorra
+   sample, plus Singapore, London, Paris, New York and Tokyo); sizes are computed on device from the
+   bounding box and zoom range and labelled as estimates.
 4. Search a place (or type `42.5069, 1.5212`), pick a profile (driving/cycling/walking), *Start*.
 5. Navigation shows the next manoeuvre, remaining distance/time/ETA, speaks it via the on-device TTS
    voice, keeps running with the screen off (foreground service), and recalculates after a deviation.
@@ -206,6 +208,11 @@ Details, proxy/CI hints and troubleshooting: [`docs/BUILDING.md`](docs/BUILDING.
 | `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | show position, navigate | requested at runtime, with an explanation, only when you tap the location button |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` | guidance with screen off | only while a route is active |
 | `POST_NOTIFICATIONS` | navigation notification | Android 13+ |
+| `WAKE_LOCK` | declared in the manifest, currently acquired by nothing — see the note below | not used |
+
+`WAKE_LOCK` is the one permission in the manifest that no code asks for: the screen-off case is
+handled by the foreground service, so the declaration is inert. It is recorded in `OPTIMIZATION.md`
+as J-14 rather than dropped here, because whether to keep it is a product decision.
 
 There is no background-location permission: navigation is a foreground service while you are
 actively navigating. Saved places, search history and downloads stay on the device; backups are
@@ -218,16 +225,25 @@ explicitly excluded (`data_extraction_rules.xml`).
 See [`docs/TESTING.md`](docs/TESTING.md) for the full matrix, what was executed, what passed, and
 what could not run here. Summary of the automated suites:
 
-* `core/common` — spherical geometry, cross-track distance, tile maths, formatters (**28**)
+* `core/common` — spherical geometry, cross-track distance, tile maths, formatters (**37**)
 * `core/offline` — download engine against MockWebServer: resume, 200-ignoring-Range, checksum
-  mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry (**21**)
+  mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry, storage guard, region
+  catalogue (**122**)
 * `core/routing` — navigation tracker (off-route, arrival, snapping), guidance announcer, instruction
-  mapper, and a **real GraphHopper integration test** on the Andorra extract (**28**)
+  mapper, routing-package inspection, and a **real GraphHopper integration test** on the bundled
+  Andorra graph (**115**)
 * `core/search` — FTS4 index, gzip pack import, prefix/case/multi-word/injection-safe queries,
-  nearby, region delete (**12**)
-* `core/data` — Room repositories and settings (**10**)
+  nearby, region delete (**58**)
+* `core/map` — the style generator and its spec-conformance validator (**129**)
+* `core/location` — location source, permission copy, rationale state (**33**)
+* `core/data` — Room repositories and settings (**14**)
+* `app` — download and view-model state mapping, routing and navigation glue, and the static audits
+  that hold startup I/O, imports, logging and these docs in place (**144**)
 
-Total: **99 tests, 0 failures**, executed on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35).
+Total: **652 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,304 executions.
+`core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
+reach.
 
 ---
 
@@ -236,7 +252,9 @@ Total: **99 tests, 0 failures**, executed on GitHub Actions (Ubuntu runner, JDK 
 * `tools/build_places_pack.py` — turns any `.osm.pbf` into an offline places pack
   (`pip install osmium`, then `python3 tools/build_places_pack.py region.osm.pbf out.jsonl.gz`).
 * `docs/` — architecture, building, testing, limitations.
-* `.github/workflows/android.yml` — build + unit tests + lint on every push.
+* `.github/workflows/android.yml` — `./gradlew test`, then `:app:assembleDebug`, on every push to
+  `main` and every pull request; the test reports and the debug APK are uploaded as artifacts. Lint
+  is not wired into CI yet — run it locally with `./gradlew lint` (J-08 in `OPTIMIZATION.md`).
 
 ## Licence
 
