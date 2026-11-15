@@ -82,7 +82,20 @@ class RepositoryTest {
         repository.record("ordino", "Ordino", GeoPoint(42.55, 1.53))
         val recent = repository.observe().first()
         assertEquals(2, recent.size)
+        // Re-recording replaces the row, so "ordino" is both the newest and the highest id; the
+        // order no longer depends on whether the three records landed in the same millisecond.
         assertEquals("ordino", recent.first().query)
+    }
+
+    @Test
+    fun `recent searches with identical timestamps come back newest first`() = runTest {
+        val dao = db.recentSearchDao()
+        // Same `used_at` on purpose: the order must be decided by id, not by the query plan.
+        listOf("first", "second", "third").forEach { query ->
+            dao.insert(RecentSearchEntity(query = query, name = query, latitude = 1.0, longitude = 2.0, usedAt = 1_000L))
+        }
+        val recent = RecentSearchRepository(dao).observe().first()
+        assertEquals(listOf("third", "second", "first"), recent.map { it.query })
     }
 
     @Test

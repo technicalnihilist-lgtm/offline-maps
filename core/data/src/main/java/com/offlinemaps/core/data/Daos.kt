@@ -34,7 +34,12 @@ interface SavedPlaceDao {
 
 @Dao
 interface RecentSearchDao {
-    @Query("SELECT * FROM recent_searches ORDER BY used_at DESC LIMIT :limit")
+    /**
+     * Newest first. Ties on `used_at` are broken by `id` — the same tie-break [pruneTo] uses — so
+     * rows recorded inside the same millisecond still come back in a stable, newest-first order
+     * instead of in whatever order the query plan happens to produce.
+     */
+    @Query("SELECT * FROM recent_searches ORDER BY used_at DESC, id DESC LIMIT :limit")
     fun observeRecent(limit: Int = RecentSearchLimits.VISIBLE): Flow<List<RecentSearchEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
