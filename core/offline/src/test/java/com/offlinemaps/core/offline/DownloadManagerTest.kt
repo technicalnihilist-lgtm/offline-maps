@@ -147,6 +147,19 @@ class DownloadManagerTest {
             error("unreachable")
         }
 
+    /**
+     * Waits until a cancellation has settled in both views of it: the store row is gone *and* the
+     * engine has dropped its in-memory state entry. `DownloadManager.cancel` deletes the record
+     * before its cleanup coroutine removes the state, so polling the store and then asserting on
+     * `states` raced - the release run of 2026-11-14 saw the row gone while the runtime still read
+     * RUNNING (OPTIMIZATION.md J-15).
+     */
+    private suspend fun awaitCancelled(manager: DownloadManager, key: String = "test-pkg") {
+        withTimeout(15_000) {
+            while (store.find(key) != null || manager.states.value[key] != null) delay(25)
+        }
+    }
+
     @Test
     fun `downloads a file and verifies its checksum`() = runBlocking {
         val body = "the quick brown fox".toByteArray()
@@ -504,9 +517,7 @@ class DownloadManagerTest {
 
         manager.cancel("test-pkg")
 
-        withTimeout(15_000) {
-            while (store.find("test-pkg") != null) delay(25)
-        }
+        awaitCancelled(manager)
         assertFalse("the partial file must be gone", File(targetDir, "file.pbf.part").exists())
         assertFalse("the sidecar must be gone", File(targetDir, "file.pbf.meta").exists())
         assertFalse("nothing may be installed", File(targetDir, "file.pbf").exists())
@@ -533,9 +544,7 @@ class DownloadManagerTest {
 
         manager.cancel("test-pkg")
 
-        withTimeout(15_000) {
-            while (store.find("test-pkg") != null) delay(25)
-        }
+        awaitCancelled(manager)
         assertFalse("the partial file must be gone", part.exists())
         assertFalse("the sidecar must be gone", File(targetDir, "file.pbf.meta").exists())
     }
