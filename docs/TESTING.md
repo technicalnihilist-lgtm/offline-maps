@@ -3,7 +3,7 @@
 Executed on **GitHub Actions** (Ubuntu runner, JDK 17 Temurin, Android SDK platform 35,
 build-tools 34.0.0, Gradle 8.9 wrapper).
 
-Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/43595598174> - **success**.
+Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/43673274555> - **success**.
 (The counts below are that run's; the badge on the README links the latest run.)
 
 ## Automated tests — 673 tests, 0 failures
