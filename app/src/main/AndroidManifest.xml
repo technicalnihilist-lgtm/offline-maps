@@ -11,11 +11,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Turn-by-turn guidance continues with the screen off. The service is a foreground
-         service of type location and stops when navigation ends. -->
+         service of type location and stops when navigation ends; that, not a wake lock, is what
+         keeps the process alive there, so no WAKE_LOCK is declared (OPTIMIZATION.md J-14). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

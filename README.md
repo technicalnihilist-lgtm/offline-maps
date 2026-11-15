@@ -67,7 +67,7 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **673 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Unit tests | **681 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
@@ -208,11 +208,11 @@ Details, proxy/CI hints and troubleshooting: [`docs/BUILDING.md`](docs/BUILDING.
 | `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | show position, navigate | requested at runtime, with an explanation, only when you tap the location button |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` | guidance with screen off | only while a route is active |
 | `POST_NOTIFICATIONS` | navigation notification | Android 13+ |
-| `WAKE_LOCK` | declared in the manifest, currently acquired by nothing — see the note below | not used |
 
-`WAKE_LOCK` is the one permission in the manifest that no code asks for: the screen-off case is
-handled by the foreground service, so the declaration is inert. It is recorded in `OPTIMIZATION.md`
-as J-14 rather than dropped here, because whether to keep it is a product decision.
+There is no `WAKE_LOCK`: nothing in the tree acquires one, and the screen-off case is carried by the
+location foreground service, so the declaration was inert and is gone (OPTIMIZATION.md J-14). This
+table and the manifest are held together by `PermissionDeclarationTest`, which fails if either names
+a permission the other does not.
 
 There is no background-location permission: navigation is a foreground service while you are
 actively navigating. Saved places, search history and downloads stay on the device; backups are
@@ -239,10 +239,10 @@ what could not run here. Summary of the automated suites:
 * `core/data` — Room repositories and settings (**15**)
 * `app` — download and view-model state mapping, routing and navigation glue, and the static audits
   that hold startup I/O, imports, logging, the CI workflow, the Room schema export ordering and
-  these docs in place (**154**)
+  these docs in place (**162**)
 
-Total: **673 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
-per variant — `./gradlew test` runs each module's debug and release suites, so 1,346 executions.
+Total: **681 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,362 executions.
 `core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
 reach.
 
