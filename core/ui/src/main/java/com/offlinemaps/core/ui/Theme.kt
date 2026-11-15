@@ -1,7 +1,6 @@
 package com.offlinemaps.core.ui
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -122,7 +121,3 @@ fun OfflineMapsTheme(theme: MapTheme = MapTheme.LIGHT, content: @Composable () -
     }
     MaterialTheme(colorScheme = scheme, typography = AppTypography, content = content)
 }
-
-/** Respects the system setting when the user has not chosen a theme explicitly. */
-@Composable
-fun defaultTheme(): MapTheme = if (isSystemInDarkTheme()) MapTheme.DARK else MapTheme.LIGHT

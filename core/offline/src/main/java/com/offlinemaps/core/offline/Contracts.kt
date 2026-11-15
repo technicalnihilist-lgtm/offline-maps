@@ -49,7 +49,6 @@ data class DownloadProgress(
     val bytesDownloaded: Long,
     val bytesTotal: Long,
     val bytesPerSecond: Long = 0L,
-    val etaSeconds: Long? = null,
 ) {
     val fraction: Float
         get() = when {

@@ -564,12 +564,11 @@ class DownloadManager(
         persist: Boolean,
     ) {
         if (pausedKeys.contains(request.packageKey)) return
-        val eta = if (rate > 0 && total > written) (total - written) / rate else null
         _states.update {
             it + (request.packageKey to DownloadRuntime(
                 packageKey = request.packageKey,
                 status = DownloadStatus.RUNNING,
-                progress = DownloadProgress(request.packageKey, written, total, rate, eta),
+                progress = DownloadProgress(request.packageKey, written, total, rate),
             ))
         }
         // The UI state above is republished on every tick; the durable row is not. Nothing on the
