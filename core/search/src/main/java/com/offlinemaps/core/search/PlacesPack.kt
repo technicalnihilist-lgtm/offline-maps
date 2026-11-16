@@ -113,9 +113,22 @@ object PlacesPackReader {
         }
     }
 
-    fun read(file: File, stats: PlacesPackStats = PlacesPackStats()): Sequence<PlaceRecord> =
-        file.inputStream().use { stream ->
-            // Materialise inside the stream scope so the file handle is released immediately.
-            read(stream, stats).toList().asSequence()
-        }
+    /**
+     * Reads [file] and hands the records to [block] while the stream is still open.
+     *
+     * A pack of a city holds tens of thousands of records and a country's holds hundreds of
+     * thousands, so the read has to stay streaming: the old file overload materialised the whole
+     * sequence first - it had to, because the sequence cannot outlive the stream it reads - and the
+     * importer then wrote those rows while every one of them was already resident. Holding the
+     * stream open for the length of [block] removes that copy: [block] sees the records as they
+     * decode, so the only thing that grows with the pack is the importer's own transaction.
+     *
+     * The handle is closed when [block] returns or throws, so the file is still released before the
+     * caller sees the result. Nothing about the pack format or the records changes.
+     */
+    inline fun <T> read(
+        file: File,
+        stats: PlacesPackStats = PlacesPackStats(),
+        block: (Sequence<PlaceRecord>) -> T,
+    ): T = file.inputStream().use { stream -> block(read(stream, stats)) }
 }

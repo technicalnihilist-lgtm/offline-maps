@@ -121,7 +121,10 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
      */
     fun importPack(regionId: String, file: File, onProgress: (Int) -> Unit = {}): PlacesPackStats {
         val stats = PlacesPackStats()
-        importPack(regionId, PlacesPackReader.read(file, stats), onProgress)
+        // The rows are written as the pack decodes, inside the same stream scope: a pack is read
+        // once and never held in memory in full (see PlacesPackReader.read), so importing a city's
+        // pack no longer needs room for every record at the same time as room for the transaction.
+        PlacesPackReader.read(file, stats) { records -> importPack(regionId, records, onProgress) }
         return stats
     }
 

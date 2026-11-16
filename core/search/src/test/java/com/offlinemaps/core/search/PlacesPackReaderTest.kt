@@ -7,6 +7,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.util.zip.GZIPOutputStream
 
@@ -139,5 +140,49 @@ class PlacesPackReaderTest {
         assertEquals(0, stats.records)
         assertEquals(2, stats.skippedLines)
         assertTrue(stats.damaged)
+    }
+
+    // ---- the file overload streams instead of materialising (OPTIMIZATION.md J-16) ----------
+
+    @Test
+    fun `a pack file is decoded as it is consumed, not all at once`() {
+        val file = File.createTempFile("places", ".jsonl.gz")
+        try {
+            file.writeBytes(gzip(packText(500)))
+            val stats = PlacesPackStats()
+            var decodedBeforeFirstRead = -1
+            val names = PlacesPackReader.read(file, stats) { records ->
+                // The old file overload had already decoded all 500 records by this point; the
+                // importer only ever needs the record it is writing, so nothing should be ahead.
+                decodedBeforeFirstRead = stats.records
+                records.take(2).map { it.name }.toList()
+            }
+            assertEquals(
+                "the pack was decoded before the caller read a record from it",
+                0,
+                decodedBeforeFirstRead,
+            )
+            assertEquals(listOf("Place number 1 of Andorra", "Place number 2 of Andorra"), names)
+            assertEquals("the whole pack was decoded to read two records", 2, stats.records)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `a pack file that ends early still reports the damage through the file overload`() {
+        val file = File.createTempFile("places", ".jsonl.gz")
+        try {
+            val full = gzip(packText(300))
+            file.writeBytes(full.copyOf(full.size / 2))
+            val stats = PlacesPackStats()
+            val records = PlacesPackReader.read(file, stats) { it.toList() }
+            assertTrue("expected records from the readable prefix, got ${records.size}", records.isNotEmpty())
+            assertTrue("expected the cut to be reported as truncated", stats.truncated)
+            assertTrue(stats.damaged)
+            assertEquals(records.size, stats.records)
+        } finally {
+            file.delete()
+        }
     }
 }
