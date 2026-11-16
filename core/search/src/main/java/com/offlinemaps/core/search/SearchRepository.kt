@@ -32,6 +32,11 @@ class SearchRepository(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = { System.nanoTime() / 1_000_000L },
     logger: (String) -> Unit = {},
+    /**
+     * How many places the index holds. A parameter only so a test can prove the count is not run
+     * for a query that already matched something (OPTIMIZATION.md J-17); the app leaves it alone.
+     */
+    private val countRows: () -> Int = { index.count() },
 ) {
 
     private val prewarm = SearchPrewarm(warm = { index.warmUp() }, clock = clock, logger = logger)
@@ -59,7 +64,7 @@ class SearchRepository(
 
     suspend fun indexSize(): Int = withContext(io) { sizeBlocking() }
 
-    private fun sizeBlocking(): Int = runCatching { index.count() }.getOrDefault(0)
+    private fun sizeBlocking(): Int = runCatching { countRows() }.getOrDefault(0)
 
     suspend fun search(query: String, limit: Int = 25): List<PlaceResult> = withContext(io) {
         val trimmed = query.trim()
@@ -86,15 +91,22 @@ class SearchRepository(
         // cancelled search that wrote them would describe the newest query with an older answer
         // (OPTIMIZATION.md D-03).
         currentCoroutineContext().ensureActive()
+        // The coverage note is decided without counting the whole index when the query already
+        // matched something (OPTIMIZATION.md J-17). `SELECT COUNT(*)` walks every row of `places`,
+        // and it only ever decided between two notes for a query that returned nothing: rows can
+        // only come back from a table that has some, so a non-empty result means the count would
+        // have been at least one and the note would have been null anyway. The notes themselves,
+        // and which query gets which, are unchanged.
         val note = when {
+            results.isNotEmpty() -> null
             sizeBlocking() == 0 -> NO_DATA_NOTE
-            results.isEmpty() -> NOTHING_MATCHED
-            else -> null
+            else -> NOTHING_MATCHED
         }
         currentCoroutineContext().ensureActive()
         lastCoverageNote = note
         // Timed after the coverage count too, so the number is what the user actually waited for
-        // (OPTIMIZATION.md A-06). Only the first search of the process is kept.
+        // (OPTIMIZATION.md A-06). A search that matched skips that count, so its time is the
+        // query's own. Only the first search of the process is kept.
         prewarm.recordSearch(clock() - startedAt)
         if (coordinate != null) {
             listOf(coordinate) + results.filterNot { it.id == coordinate.id }

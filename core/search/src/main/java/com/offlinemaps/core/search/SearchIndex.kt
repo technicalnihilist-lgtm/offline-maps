@@ -363,6 +363,20 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             "CREATE VIRTUAL TABLE places_fts USING fts4(" +
                 "name, admin, street, tokenize=unicode61, prefix=\"2,3\")"
 
+        /**
+         * The two patterns [toFtsTerms] runs over the user's text, compiled once for the process
+         * rather than once per call (OPTIMIZATION.md J-17). `Regex(...)` builds a `Pattern`, and
+         * building one is the most expensive part of sanitising a short query - more than the scan
+         * itself. [toFtsTerms] is called at least twice for every search: once by `SearchRepository`
+         * to tell a query that cannot match from one that might, and again inside [search] - and
+         * every call used to compile both patterns again. `Pattern` is immutable and safe to match
+         * from several threads at once, so one shared instance per pattern is enough; the strings
+         * both produce are unchanged.
+         */
+        private val NON_TERM_CHARS = Regex("[^\\p{L}\\p{N}\\s]")
+
+        private val WHITESPACE = Regex("\\s+")
+
         fun toFtsTerms(query: String): String {
             // Strip everything that is not a letter, digit or space, then build one prefix term per
             // word. The result is always either empty or one to six space separated `<letters and
@@ -376,7 +390,7 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             //   than acting as operators - "a NEAR b" is three terms, not an error;
             // * no term is ever empty, and the count is capped, so nothing can be left dangling
             //   next to a space.
-            val cleaned = query.replace(Regex("[^\\p{L}\\p{N}\\s]"), " ").trim()
+            val cleaned = query.replace(NON_TERM_CHARS, " ").trim()
             if (cleaned.isEmpty()) return ""
             // FTS4 prefix queries must be written as `term*` - a quoted `"term"*` only matches a
             // complete token and silently returns nothing for partial input.
@@ -385,7 +399,7 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             // without the FTS3/4 "enhanced query syntax" flag, so it treats a literal AND as a
             // search term (returning nothing) where desktop SQLite treats it as an operator.
             // Space-separated terms are an implicit AND on both.
-            val terms = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }.take(6)
+            val terms = cleaned.split(WHITESPACE).filter { it.isNotBlank() }.take(6)
             return terms.joinToString(" ") { "$it*" }
         }
 

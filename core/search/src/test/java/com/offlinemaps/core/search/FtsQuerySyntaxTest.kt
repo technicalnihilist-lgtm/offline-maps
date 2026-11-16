@@ -13,6 +13,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import java.util.zip.GZIPOutputStream
 
 /**
@@ -188,6 +190,47 @@ class FtsQuerySyntaxTest {
     fun `a very long query is cut to six terms`() {
         val terms = SearchIndex.toFtsTerms((1..40).joinToString(" ") { "word$it" })
         assertEquals("word1* word2* word3* word4* word5* word6*", terms)
+    }
+
+    /**
+     * OPTIMIZATION.md J-17: the sanitiser's two patterns are now compiled once and shared, so every
+     * search - and the repository's own pre-check - matches with the same instances. `Pattern` is
+     * immutable and safe to match concurrently, and this pins that: eight threads sanitising the
+     * same inputs must get exactly the strings one thread gets, so nothing in the shared patterns
+     * carries state from one call into the next.
+     */
+    @Test
+    fun `the sanitiser gives the same answer from eight threads at once`() {
+        val inputs = listOf(
+            "andorra la vella",
+            "\"ordino\"*",
+            "a NEAR b",
+            "   ",
+            "a(b)c",
+            "-not ordino",
+            "name:andorra",
+            "andorra ".repeat(40),
+        )
+        val expected = inputs.map { SearchIndex.toFtsTerms(it) }
+        val threads = 8
+        val rounds = 500
+        val executor = Executors.newFixedThreadPool(threads)
+        try {
+            val tasks = (0 until threads).map { worker ->
+                Callable {
+                    var mismatches = 0
+                    repeat(rounds) { round ->
+                        val i = (worker * rounds + round) % inputs.size
+                        if (SearchIndex.toFtsTerms(inputs[i]) != expected[i]) mismatches++
+                    }
+                    mismatches
+                }
+            }
+            val mismatches = executor.invokeAll(tasks).sumOf { it.get() }
+            assertEquals("no call may see another call's state", 0, mismatches)
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     @Test
