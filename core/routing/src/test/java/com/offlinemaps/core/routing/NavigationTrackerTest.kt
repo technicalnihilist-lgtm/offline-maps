@@ -325,11 +325,15 @@ class NavigationTrackerTest {
     fun `a fix projects onto the segment it has already measured`() {
         // The projection used to measure the matched segment's length and bearing again, though the
         // cross-track scan had just measured them for the same segment (OPTIMIZATION.md J-22). The
-        // cache now answers both: the first fix asks for one pair more than it measures, because
-        // the projection asks the cache for the segment it matched - and measures nothing new.
+        // cache now answers both: the first fix asks for exactly one pair more than it measures,
+        // because the projection asks the cache for the segment it matched - and measures nothing
+        // new. The fix carries its own bearing so that the heading fallback, which reads the same
+        // segment's bearing on purpose, does not add a second ask of its own.
         val fix = GeoPoint(42.5000, 1.5033)
         val tracker = NavigationTracker(plan())
-        val state = tracker.onLocation(LocationFix(fix, accuracyMeters = 5f))!!
+        val state = tracker.onLocation(
+            LocationFix(fix, accuracyMeters = 5f, bearingDegrees = 90f),
+        )!!
         assertEquals(
             "the projection measured the matched segment a second time",
             tracker.segmentMeasurements + 1,
