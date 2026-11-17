@@ -234,10 +234,18 @@ class GeoMathTest {
         val past = GeoMath.projectOnSegment(beyond, andorraLaVella, escaldes)
         assertTrue("along was ${past.alongMeters}", past.alongMeters > past.segmentLengthMeters)
         assertEquals(past.segmentLengthMeters, past.clampedAlongMeters, 1e-12)
+        // Clamped to the end, the projection is the segment's end - not the start it came from.
         assertEquals(
-            GeoMath.distanceMeters(beyond, escaldes),
+            "a projection past the end snaps to the end",
+            0.0,
             GeoMath.distanceMeters(past.snappedPoint, escaldes),
-            1.0,
+            0.01,
+        )
+        assertEquals(
+            "a projection past the end does not snap back to the start",
+            GeoMath.distanceMeters(beyond, escaldes),
+            GeoMath.distanceMeters(past.snappedPoint, beyond),
+            0.01,
         )
     }
 
