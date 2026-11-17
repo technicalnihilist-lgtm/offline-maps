@@ -77,6 +77,14 @@ class NavigationTracker(
     internal val segmentMeasurements: Long get() = segmentMeasures?.measurements ?: 0L
 
     /**
+     * Times a fix has asked the cache for a segment's pair, measured or not. It exceeds
+     * [segmentMeasurements] by exactly one per fix that projects onto its matched segment, which is
+     * what shows the projection reading the pair rather than measuring it again
+     * (OPTIMIZATION.md J-22). Diagnostics only.
+     */
+    internal val segmentMeasureRequests: Long get() = segmentMeasures?.measureRequests ?: 0L
+
+    /**
      * Refuses a fix older than the last accepted one. A late fix from a batched or replayed stream
      * used to move the matched segment, the off-route counter and the arrival flag backwards.
      */
@@ -148,13 +156,13 @@ class NavigationTracker(
         }
         lastGeometryIndex = bestIndex
 
-        val segStart = geometry[bestIndex]
-        val segEnd = geometry[bestIndex + 1]
         // One pass over the segment answers both questions this fix asks of it: how far along the
         // segment the fix projects, and where it snaps to. Measured separately they cost three
         // lengths and three bearings of the same segment, plus the bearing and distance to the fix
-        // twice (OPTIMIZATION.md J-19).
-        val projection = GeoMath.projectOnSegment(fix.point, segStart, segEnd)
+        // twice (OPTIMIZATION.md J-19). The segment's own length and bearing come from the cache
+        // that measured them for the cross-track scan a few lines above, so this pass costs the
+        // distance and bearing to the fix and nothing else (OPTIMIZATION.md J-22).
+        val projection = segments.projectOnSegment(fix.point, bestIndex)
         val alongSegment = projection.clampedAlongMeters
         val baseCumulative = plan.cumulativeMeters.getOrElse(bestIndex) { 0.0 }
         val alongRoute = baseCumulative + alongSegment

@@ -322,6 +322,35 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `a fix projects onto the segment it has already measured`() {
+        // The projection used to measure the matched segment's length and bearing again, though the
+        // cross-track scan had just measured them for the same segment (OPTIMIZATION.md J-22). The
+        // cache now answers both: the first fix asks for one pair more than it measures, because
+        // the projection asks the cache for the segment it matched - and measures nothing new.
+        val fix = GeoPoint(42.5000, 1.5033)
+        val tracker = NavigationTracker(plan())
+        val state = tracker.onLocation(LocationFix(fix, accuracyMeters = 5f))!!
+        assertEquals(
+            "the projection measured the matched segment a second time",
+            tracker.segmentMeasurements + 1,
+            tracker.segmentMeasureRequests,
+        )
+        // And the state carries the numbers the measuring call gives, not merely close ones.
+        val geometry = plan().geometry
+        val index0 = (0..geometry.size - 2).minByOrNull {
+            GeoMath.crossTrackDistanceMeters(fix, geometry[it], geometry[it + 1])
+        }!!
+        val reference = GeoMath.projectOnSegment(fix, geometry[index0], geometry[index0 + 1])
+        assertEquals("snapped point", reference.snappedPoint, state.snappedPoint)
+        assertEquals(
+            "along-route distance",
+            plan().cumulativeMeters[index0] + reference.clampedAlongMeters,
+            state.alongRouteMeters,
+            1e-9,
+        )
+    }
+
+    @Test
     fun `the next manoeuvre and the current street are what the two scans gave`() {
         // The fix path answers two questions about one boundary - the first manoeuvre ahead of the
         // fix and the last one behind it - and used to answer them with two separate walks of the

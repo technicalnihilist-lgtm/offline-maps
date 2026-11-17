@@ -72,6 +72,43 @@ class SegmentMeasuresTest {
     }
 
     @Test
+    fun `projecting onto a segment reuses the pair the cross-track test took`() {
+        // The fix path tests a fix against a segment and then projects onto the one it matched, so
+        // the projection must read the pair the test already took rather than measure it again
+        // (OPTIMIZATION.md J-22). Same order as the tracker: cross-track, then projection.
+        val points = geometry()
+        val measures = SegmentMeasures(points)
+        val random = java.util.Random(20261121L)
+        repeat(100) {
+            val fix = GeoMath.destination(
+                points[3],
+                random.nextDouble() * 60.0,
+                random.nextDouble() * 360.0,
+            )
+            measures.crossTrackDistanceMeters(fix, 3)
+            val projection = measures.projectOnSegment(fix, 3)
+            val expected = GeoMath.projectOnSegment(fix, points[3], points[4])
+            assertEquals(
+                "along-track distance differs from the call that measures the segment itself",
+                expected.alongMeters,
+                projection.alongMeters,
+                0.0,
+            )
+            assertEquals(
+                "snapped point differs from the call that measures the segment itself",
+                expected.snappedPoint,
+                projection.snappedPoint,
+            )
+        }
+        assertEquals("the segment was measured more than once", 1L, measures.measurements)
+        assertEquals(
+            "one ask per call, so the projection asked for a pair already in hand",
+            200L,
+            measures.measureRequests,
+        )
+    }
+
+    @Test
     fun `a scan of the whole geometry measures each segment exactly once`() {
         val points = geometry()
         val measures = SegmentMeasures(points)

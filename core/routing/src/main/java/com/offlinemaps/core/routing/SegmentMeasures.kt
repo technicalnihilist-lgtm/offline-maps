@@ -41,6 +41,16 @@ internal class SegmentMeasures(private val geometry: List<GeoPoint>) {
     var measurements: Long = 0
         private set
 
+    /**
+     * Times a caller has asked [measure] for a segment's pair, whether or not that ask had to
+     * measure anything. [measurements] counts segments actually measured, so it cannot show a
+     * caller re-asking for a pair already in hand; this can, and the tests use it to pin that the
+     * projection reuses the pair the cross-track test already took (OPTIMIZATION.md J-22).
+     * Diagnostics only.
+     */
+    var measureRequests: Long = 0
+        private set
+
     /** Length of segment [index] in metres, measured once. */
     fun lengthMeters(index: Int): Double {
         measure(index)
@@ -51,6 +61,22 @@ internal class SegmentMeasures(private val geometry: List<GeoPoint>) {
     fun bearingDegrees(index: Int): Double {
         measure(index)
         return bearings[index]
+    }
+
+    /**
+     * Projection of [point] onto segment [index], the same projection
+     * [GeoMath.projectOnSegment] returns for the segment's two endpoints, with the segment's own
+     * measures reused instead of re-measured (OPTIMIZATION.md J-22).
+     */
+    fun projectOnSegment(point: GeoPoint, index: Int): GeoMath.SegmentProjection {
+        measure(index)
+        return GeoMath.projectOnSegment(
+            point,
+            geometry[index],
+            geometry[index + 1],
+            lengths[index],
+            bearings[index],
+        )
     }
 
     /**
@@ -70,6 +96,7 @@ internal class SegmentMeasures(private val geometry: List<GeoPoint>) {
     }
 
     private fun measure(index: Int) {
+        measureRequests++
         if (measured[index]) return
         lengths[index] = GeoMath.distanceMeters(geometry[index], geometry[index + 1])
         bearings[index] = GeoMath.bearingDegrees(geometry[index], geometry[index + 1])

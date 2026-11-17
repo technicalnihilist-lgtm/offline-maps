@@ -302,6 +302,68 @@ class GeoMathTest {
     }
 
     @Test
+    fun `a supplied segment pair gives the projection the measuring call gives`() {
+        // The caller that already holds a segment's length and bearing can hand them over instead of
+        // having them measured a second time (OPTIMIZATION.md J-22), so the answer must be the one
+        // the measuring call gives - to the last bit, not merely close to it.
+        val random = java.util.Random(20261118L)
+        var checked = 0
+        repeat(500) {
+            val start = GeoPoint(42.0 + random.nextDouble(), 1.0 + random.nextDouble())
+            val end = GeoPoint(
+                start.latitude + random.nextDouble() * 0.01 - 0.005,
+                start.longitude + random.nextDouble() * 0.01 - 0.005,
+            )
+            val point = GeoPoint(
+                start.latitude + random.nextDouble() * 0.02 - 0.01,
+                start.longitude + random.nextDouble() * 0.02 - 0.01,
+            )
+            val supplied = GeoMath.projectOnSegment(
+                point,
+                start,
+                end,
+                GeoMath.distanceMeters(start, end),
+                GeoMath.bearingDegrees(start, end),
+            )
+            val measured = GeoMath.projectOnSegment(point, start, end)
+            assertEquals(
+                "along-track distance for $point on $start-$end",
+                measured.alongMeters,
+                supplied.alongMeters,
+                0.0,
+            )
+            assertEquals(
+                "segment length for $start-$end",
+                measured.segmentLengthMeters,
+                supplied.segmentLengthMeters,
+                0.0,
+            )
+            assertEquals(
+                "snapped point for $point on $start-$end",
+                measured.snappedPoint,
+                supplied.snappedPoint,
+            )
+            checked++
+        }
+        assertEquals("the loop must have run", 500, checked)
+    }
+
+    @Test
+    fun `a supplied pair cannot turn a degenerate segment into a direction`() {
+        // A segment shorter than half a metre has no direction to advance along, and the caller's
+        // pair does not give it one: the projection is still the segment's own start.
+        val projection = GeoMath.projectOnSegment(
+            GeoPoint(42.5180, 1.5270),
+            andorraLaVella,
+            andorraLaVella,
+            GeoMath.distanceMeters(andorraLaVella, andorraLaVella),
+            GeoMath.bearingDegrees(andorraLaVella, andorraLaVella),
+        )
+        assertEquals(0.0, projection.alongMeters, 1e-12)
+        assertEquals(andorraLaVella, projection.snappedPoint)
+    }
+
+    @Test
     fun `bounds contain and expand correctly`() {
         val bounds = GeoBounds(42.42, 1.41, 42.66, 1.79)
         assertTrue(bounds.contains(andorraLaVella))

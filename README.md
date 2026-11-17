@@ -129,7 +129,7 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **707 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Unit tests | **711 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
@@ -288,13 +288,13 @@ See [`docs/TESTING.md`](docs/TESTING.md) for the full matrix, what was executed,
 what could not run here. Summary of the automated suites:
 
 * `core/common` — spherical geometry, cross-track distance and segment projection, tile maths,
-  formatters (**41**)
+  formatters (**45**)
 * `core/offline` — download engine against MockWebServer: resume, 200-ignoring-Range, checksum
   mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry, storage guard, region
   catalogue (**122**)
 * `core/routing` — navigation tracker (off-route, arrival, snapping), guidance announcer, instruction
   mapper, routing-package inspection, the graph-directory fingerprint that notices a reinstalled
-  package, and a **real GraphHopper integration test** on the bundled Andorra graph (**133**)
+  package, and a **real GraphHopper integration test** on the bundled Andorra graph (**135**)
 * `core/search` — FTS4 index, gzip pack import, prefix/case/multi-word/injection-safe queries,
   nearby, region delete, the coverage note's count gate (**65**)
 * `core/map` — the style generator and its spec-conformance validator (**129**)
@@ -304,8 +304,8 @@ what could not run here. Summary of the automated suites:
   that hold startup I/O, imports, logging, the CI workflow, the Room schema export ordering and
   these docs in place (**167**)
 
-Total: **707 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
-per variant — `./gradlew test` runs each module's debug and release suites, so 1,414 executions.
+Total: **711 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,422 executions.
 `core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
 reach.
 

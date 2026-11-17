@@ -97,18 +97,35 @@ object GeoMath {
      * is what advancing [start] along the segment by that distance gives, so both answers are the
      * numbers the separate calls produced.
      */
-    fun projectOnSegment(point: GeoPoint, start: GeoPoint, end: GeoPoint): SegmentProjection {
-        val segmentLength = distanceMeters(start, end)
-        val startBearing = bearingDegrees(start, end)
-        if (segmentLength < 0.5) return SegmentProjection(start, segmentLength, startBearing, 0.0)
+    fun projectOnSegment(point: GeoPoint, start: GeoPoint, end: GeoPoint): SegmentProjection =
+        projectOnSegment(point, start, end, distanceMeters(start, end), bearingDegrees(start, end))
+
+    /**
+     * The same projection, with the segment's own two measures - its length and its bearing from
+     * [start] - supplied by the caller rather than measured here (OPTIMIZATION.md J-22).
+     *
+     * Those two numbers belong to the segment, not to the point being projected, so a caller that
+     * already knows them - the segment-measure cache in `core:routing`, which measured the segment to
+     * test the fix against it a moment earlier - does not have to have them measured a second time.
+     * The result is the one the three-argument call returns, term for term: the three-argument call
+     * is this one with the pair measured immediately before it.
+     */
+    fun projectOnSegment(
+        point: GeoPoint,
+        start: GeoPoint,
+        end: GeoPoint,
+        segmentLengthMeters: Double,
+        startBearingDegrees: Double,
+    ): SegmentProjection {
+        if (segmentLengthMeters < 0.5) return SegmentProjection(start, segmentLengthMeters, startBearingDegrees, 0.0)
         val toPoint = distanceMeters(start, point)
         val d13 = toPoint / EARTH_RADIUS_M
-        if (d13 == 0.0) return SegmentProjection(start, segmentLength, startBearing, 0.0)
+        if (d13 == 0.0) return SegmentProjection(start, segmentLengthMeters, startBearingDegrees, 0.0)
         val theta13 = bearingDegrees(start, point)
-        val dxt = asin((sin(d13) * sin((theta13 - startBearing) * DEG)).coerceIn(-1.0, 1.0))
+        val dxt = asin((sin(d13) * sin((theta13 - startBearingDegrees) * DEG)).coerceIn(-1.0, 1.0))
         val dat = acos((cos(d13) / cos(dxt)).coerceIn(-1.0, 1.0)) * EARTH_RADIUS_M
-        val along = if (abs(angleDelta(startBearing, theta13)) > 90.0) -dat else dat
-        return SegmentProjection(start, segmentLength, startBearing, along)
+        val along = if (abs(angleDelta(startBearingDegrees, theta13)) > 90.0) -dat else dat
+        return SegmentProjection(start, segmentLengthMeters, startBearingDegrees, along)
     }
 
     /**
