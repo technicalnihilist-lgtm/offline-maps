@@ -141,8 +141,12 @@ class NavigationTracker(
 
         val segStart = geometry[bestIndex]
         val segEnd = geometry[bestIndex + 1]
-        val alongSegment = GeoMath.alongTrackDistanceMeters(fix.point, segStart, segEnd)
-            .coerceIn(0.0, GeoMath.distanceMeters(segStart, segEnd))
+        // One pass over the segment answers both questions this fix asks of it: how far along the
+        // segment the fix projects, and where it snaps to. Measured separately they cost three
+        // lengths and three bearings of the same segment, plus the bearing and distance to the fix
+        // twice (OPTIMIZATION.md J-19).
+        val projection = GeoMath.projectOnSegment(fix.point, segStart, segEnd)
+        val alongSegment = projection.clampedAlongMeters
         val baseCumulative = plan.cumulativeMeters.getOrElse(bestIndex) { 0.0 }
         val alongRoute = baseCumulative + alongSegment
         val remaining = (plan.distanceMeters - alongRoute).coerceAtLeast(0.0)
@@ -187,7 +191,7 @@ class NavigationTracker(
             progressFraction = if (plan.distanceMeters > 0) {
                 (alongRoute / plan.distanceMeters).toFloat().coerceIn(0f, 1f)
             } else 0f,
-            snappedPoint = nearestPointOnSegment(fix.point, segStart, segEnd),
+            snappedPoint = projection.snappedPoint,
             currentStreetName = currentStreet,
             gpsSignalWeak = weak,
             headingDegrees = fix.bearingDegrees?.toDouble()
@@ -220,14 +224,6 @@ class NavigationTracker(
      */
     private fun accuracyForDecision(fix: LocationFix): Float =
         fix.accuracyMeters ?: config.unknownAccuracyMeters
-
-    /** Projects [p] onto the segment for the "camera follows the route" mode. */
-    private fun nearestPointOnSegment(p: GeoPoint, a: GeoPoint, b: GeoPoint): GeoPoint {
-        val segLength = GeoMath.distanceMeters(a, b)
-        if (segLength < 0.5) return a
-        val along = GeoMath.alongTrackDistanceMeters(p, a, b).coerceIn(0.0, segLength)
-        return GeoMath.destination(a, along, GeoMath.bearingDegrees(a, b))
-    }
 
     companion object {
         /**

@@ -155,6 +155,92 @@ class GeoMathTest {
         )
     }
 
+    /**
+     * The snapped point as `NavigationTracker` produced it before OPTIMIZATION.md J-19: the
+     * along-track distance from [GeoMath.alongTrackDistanceMeters], clamped to the segment, advanced
+     * from the start along the segment's bearing. The reference the single pass is measured against.
+     */
+    private fun longFormSnappedPoint(point: GeoPoint, start: GeoPoint, end: GeoPoint): GeoPoint {
+        val segLength = GeoMath.distanceMeters(start, end)
+        if (segLength < 0.5) return start
+        val along = GeoMath.alongTrackDistanceMeters(point, start, end).coerceIn(0.0, segLength)
+        return GeoMath.destination(start, along, GeoMath.bearingDegrees(start, end))
+    }
+
+    @Test
+    fun `segment projection is the number the separate calls produced`() {
+        // One pass now answers what two calls used to (OPTIMIZATION.md J-19), so both answers have to
+        // be the ones the separate calls gave - not merely close to them.
+        val random = java.util.Random(20261117L)
+        var checked = 0
+        repeat(500) {
+            val start = GeoPoint(42.0 + random.nextDouble(), 1.0 + random.nextDouble())
+            val end = GeoPoint(
+                start.latitude + random.nextDouble() * 0.01 - 0.005,
+                start.longitude + random.nextDouble() * 0.01 - 0.005,
+            )
+            val point = GeoPoint(
+                start.latitude + random.nextDouble() * 0.02 - 0.01,
+                start.longitude + random.nextDouble() * 0.02 - 0.01,
+            )
+            val projection = GeoMath.projectOnSegment(point, start, end)
+            val segLength = GeoMath.distanceMeters(start, end)
+            assertEquals(
+                "segment length for $start-$end",
+                segLength,
+                projection.segmentLengthMeters,
+                1e-12,
+            )
+            assertEquals(
+                "along-track distance for $point on $start-$end",
+                GeoMath.alongTrackDistanceMeters(point, start, end),
+                projection.alongMeters,
+                1e-9,
+            )
+            assertEquals(
+                "clamped along-track distance for $point on $start-$end",
+                GeoMath.alongTrackDistanceMeters(point, start, end).coerceIn(0.0, segLength),
+                projection.clampedAlongMeters,
+                1e-9,
+            )
+            val snapped = projection.snappedPoint
+            val expected = longFormSnappedPoint(point, start, end)
+            assertEquals("snapped latitude for $point on $start-$end", expected.latitude, snapped.latitude, 1e-9)
+            assertEquals(
+                "snapped longitude for $point on $start-$end",
+                expected.longitude,
+                snapped.longitude,
+                1e-9,
+            )
+            checked++
+        }
+        assertEquals("the loop must have run", 500, checked)
+    }
+
+    @Test
+    fun `segment projection handles a degenerate segment and a point on it`() {
+        val elsewhere = GeoPoint(42.5180, 1.5270)
+        // A segment of no length has no direction to advance along: the projection is its start.
+        val degenerate = GeoMath.projectOnSegment(elsewhere, andorraLaVella, andorraLaVella)
+        assertEquals(0.0, degenerate.alongMeters, 1e-12)
+        assertEquals(0.0, degenerate.clampedAlongMeters, 1e-12)
+        assertEquals(andorraLaVella, degenerate.snappedPoint)
+        // A point that is the segment's own start projects to the start.
+        val atStart = GeoMath.projectOnSegment(andorraLaVella, andorraLaVella, escaldes)
+        assertEquals(0.0, atStart.alongMeters, 1e-12)
+        assertEquals(0.0, atStart.clampedAlongMeters, 1e-12)
+        // Past the end the projection is clamped to the end, not to the start.
+        val beyond = GeoPoint(42.5300, 1.5340)
+        val past = GeoMath.projectOnSegment(beyond, andorraLaVella, escaldes)
+        assertTrue("along was ${past.alongMeters}", past.alongMeters > past.segmentLengthMeters)
+        assertEquals(past.segmentLengthMeters, past.clampedAlongMeters, 1e-12)
+        assertEquals(
+            GeoMath.distanceMeters(beyond, escaldes),
+            GeoMath.distanceMeters(past.snappedPoint, escaldes),
+            1.0,
+        )
+    }
+
     @Test
     fun `bounds contain and expand correctly`() {
         val bounds = GeoBounds(42.42, 1.41, 42.66, 1.79)

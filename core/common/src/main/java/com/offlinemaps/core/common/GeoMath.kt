@@ -59,6 +59,59 @@ object GeoMath {
     }
 
     /**
+     * Where a point falls on the segment [start]-[end], with the terms a caller needs to snap the
+     * point back onto the segment.
+     *
+     * [alongMeters] is signed exactly as [alongTrackDistanceMeters] signs it - negative behind
+     * [start], longer than [segmentLengthMeters] past [end] - and [clampedAlongMeters] is that value
+     * held inside the segment. [snappedPoint] is [start] advanced by the clamped distance along
+     * [startBearingDegrees], which is the point a caller projecting onto the segment wants.
+     *
+     * The three answers share one measurement of the segment's length, its bearing, the distance to
+     * the point and the bearing to it (OPTIMIZATION.md J-19). Asking for them one at a time meant
+     * `NavigationTracker` measured the same segment's length and bearing three times per fix and the
+     * bearing and distance to the fix twice, on the thread that folds in every location update.
+     */
+    class SegmentProjection internal constructor(
+        private val start: GeoPoint,
+        val segmentLengthMeters: Double,
+        val startBearingDegrees: Double,
+        val alongMeters: Double,
+    ) {
+        /** [alongMeters] held inside the segment: 0 at the start, the length at the end. */
+        val clampedAlongMeters: Double get() = alongMeters.coerceIn(0.0, segmentLengthMeters)
+
+        /**
+         * The point moved onto the segment. A segment shorter than half a metre has no direction to
+         * advance along, so it projects to its own start - the answer this has always given.
+         */
+        val snappedPoint: GeoPoint
+            get() = if (segmentLengthMeters < 0.5) start
+            else destination(start, clampedAlongMeters, startBearingDegrees)
+    }
+
+    /**
+     * The projection of [point] onto the segment [start]-[end], computed in a single pass.
+     *
+     * The arithmetic is [alongTrackDistanceMeters]'s, term for term, and [SegmentProjection.snappedPoint]
+     * is what advancing [start] along the segment by that distance gives, so both answers are the
+     * numbers the separate calls produced.
+     */
+    fun projectOnSegment(point: GeoPoint, start: GeoPoint, end: GeoPoint): SegmentProjection {
+        val segmentLength = distanceMeters(start, end)
+        val startBearing = bearingDegrees(start, end)
+        if (segmentLength < 0.5) return SegmentProjection(start, segmentLength, startBearing, 0.0)
+        val toPoint = distanceMeters(start, point)
+        val d13 = toPoint / EARTH_RADIUS_M
+        if (d13 == 0.0) return SegmentProjection(start, segmentLength, startBearing, 0.0)
+        val theta13 = bearingDegrees(start, point)
+        val dxt = asin((sin(d13) * sin((theta13 - startBearing) * DEG)).coerceIn(-1.0, 1.0))
+        val dat = acos((cos(d13) / cos(dxt)).coerceIn(-1.0, 1.0)) * EARTH_RADIUS_M
+        val along = if (abs(angleDelta(startBearing, theta13)) > 90.0) -dat else dat
+        return SegmentProjection(start, segmentLength, startBearing, along)
+    }
+
+    /**
      * Perpendicular distance in metres from [point] to the segment [start]-[end]. Points that
      * project outside the segment are measured to the nearer endpoint. This is the primitive
      * behind off-route detection.

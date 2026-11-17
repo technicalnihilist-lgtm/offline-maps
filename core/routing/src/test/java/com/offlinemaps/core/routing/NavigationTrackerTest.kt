@@ -254,6 +254,46 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `snapped point and progress are the numbers the separate projection calls gave`() {
+        // OPTIMIZATION.md J-19: the fix path now projects onto the matched segment in one pass
+        // instead of asking for the along-track distance and the snapped point separately, so the
+        // state has to carry the numbers those separate calls produced.
+        val routePlan = plan()
+        val tracker = NavigationTracker(routePlan)
+        val fixes = listOf(
+            GeoPoint(42.5000, 1.5050),
+            GeoPoint(42.5000, 1.5100),
+            GeoPoint(42.5030, 1.5100),
+            GeoPoint(42.5060, 1.5100),
+        )
+        var checked = 0
+        fixes.forEachIndexed { index, point ->
+            val state = tracker.onLocation(
+                LocationFix(point, accuracyMeters = 5f, timestampMillis = 1_000L * (index + 1)),
+            )!!
+            val geometry = routePlan.geometry
+            val index0 = (0..geometry.size - 2).minByOrNull {
+                GeoMath.crossTrackDistanceMeters(point, geometry[it], geometry[it + 1])
+            }!!
+            val start = geometry[index0]
+            val end = geometry[index0 + 1]
+            val segLength = GeoMath.distanceMeters(start, end)
+            val along = GeoMath.alongTrackDistanceMeters(point, start, end).coerceIn(0.0, segLength)
+            val expected = GeoMath.destination(start, along, GeoMath.bearingDegrees(start, end))
+            assertEquals("snapped latitude at $point", expected.latitude, state.snappedPoint.latitude, 1e-9)
+            assertEquals("snapped longitude at $point", expected.longitude, state.snappedPoint.longitude, 1e-9)
+            assertEquals(
+                "along-route distance at $point",
+                routePlan.cumulativeMeters[index0] + along,
+                state.alongRouteMeters,
+                1e-6,
+            )
+            checked++
+        }
+        assertEquals("every fix must have been checked", fixes.size, checked)
+    }
+
+    @Test
     fun `should recalculate helper ignores arrival`() {
         val arrived = NavigationState(
             alongRouteMeters = 1480.0, remainingMeters = 2.0, remainingSeconds = 1,
