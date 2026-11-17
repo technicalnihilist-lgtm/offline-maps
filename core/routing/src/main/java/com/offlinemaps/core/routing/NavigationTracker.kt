@@ -73,6 +73,16 @@ class NavigationTracker(
      */
     private var segmentMeasures: SegmentMeasures? = null
 
+    /**
+     * Times a fix has had the sine and cosine of its latitude taken, so the follow window can hand
+     * them to every segment it measures instead of each segment taking them again
+     * (OPTIMIZATION.md J-23). One per fix that measures segments, however many of them it measures;
+     * a plan too short to have segments is answered before this point.
+     * Diagnostics only.
+     */
+    internal var fixPointsPrepared: Long = 0
+        private set
+
     /** Segments whose length and bearing have been measured so far. Diagnostics only. */
     internal val segmentMeasurements: Long get() = segmentMeasures?.measurements ?: 0L
 
@@ -128,6 +138,14 @@ class NavigationTracker(
             )
         }
 
+        // The sine and cosine of the fix's latitude belong to the fix, not to the segment being
+        // measured, and the great-circle helpers read them once per segment. The follow window
+        // measures forty-odd segments against this one fix, so they are taken once here and handed
+        // to every measurement below instead of being taken again for each of them
+        // (OPTIMIZATION.md J-23).
+        val fixPoint = GeoMath.prepare(fix.point)
+        fixPointsPrepared++
+
         // Search a window around the last matched index first (fast path), then fall back to the
         // spatial index if the user is far away (e.g. after a long tunnel or a teleport).
         val window = 40
@@ -137,19 +155,19 @@ class NavigationTracker(
         val fastEnd = min(geometry.size - 2, lastGeometryIndex + window)
         val segments = measures()
         for (i in fastStart..fastEnd) {
-            val d = segments.crossTrackDistanceMeters(fix.point, i)
+            val d = segments.crossTrackDistanceMeters(fixPoint, i)
             if (d < bestDistance) { bestDistance = d; bestIndex = i }
         }
         if (bestDistance > FAR_FROM_WINDOW_METERS) {
-            val candidate = searchIndex().nearestSegment(fix.point)
+            val candidate = searchIndex().nearestSegment(fixPoint)
             if (candidate >= 0) {
-                val d = segments.crossTrackDistanceMeters(fix.point, candidate)
+                val d = segments.crossTrackDistanceMeters(fixPoint, candidate)
                 if (d < bestDistance) { bestDistance = d; bestIndex = candidate }
             } else {
                 // Further from the route than the index searches: kilometres away, which means a
                 // bad fix or a jump to another place. Rare enough that scanning is the right answer.
                 for (i in 0..geometry.size - 2) {
-                    val d = segments.crossTrackDistanceMeters(fix.point, i)
+                    val d = segments.crossTrackDistanceMeters(fixPoint, i)
                     if (d < bestDistance) { bestDistance = d; bestIndex = i }
                 }
             }
@@ -162,7 +180,7 @@ class NavigationTracker(
         // twice (OPTIMIZATION.md J-19). The segment's own length and bearing come from the cache
         // that measured them for the cross-track scan a few lines above, so this pass costs the
         // distance and bearing to the fix and nothing else (OPTIMIZATION.md J-22).
-        val projection = segments.projectOnSegment(fix.point, bestIndex)
+        val projection = segments.projectOnSegment(fixPoint, bestIndex)
         val alongSegment = projection.clampedAlongMeters
         val baseCumulative = plan.cumulativeMeters.getOrElse(bestIndex) { 0.0 }
         val alongRoute = baseCumulative + alongSegment

@@ -124,6 +124,29 @@ class RouteSegmentIndexTest {
     }
 
     @Test
+    fun `a prepared fix finds the same segment as the plain one`() {
+        // The scan measures the fix against every segment in the cells it visits, and the distance
+        // and the bearing each read the fix's latitude terms; the tracker now takes them once and
+        // hands them over (OPTIMIZATION.md J-23). The lookup must not change.
+        val geometry = longRoute()
+        val plain = RouteSegmentIndex(geometry)
+        val preparedIndex = RouteSegmentIndex(geometry)
+        val random = Random(20261122)
+        var checked = 0
+        for (n in 0 until 50) {
+            val at = 1 + n * (geometry.size - 3) / 50
+            val fix = fixAt(geometry, at, random.nextDouble() * 40.0, random.nextDouble() * 360.0)
+            assertEquals(
+                "nearest segment to $fix",
+                plain.nearestSegment(fix),
+                preparedIndex.nearestSegment(GeoMath.prepare(fix)),
+            )
+            checked++
+        }
+        assertEquals(50, checked)
+    }
+
+    @Test
     fun `benchmark - 500 fixes along a 5000 point route`() {
         val geometry = longRoute()
         val buildStarted = System.nanoTime()

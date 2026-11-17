@@ -364,6 +364,80 @@ class GeoMathTest {
     }
 
     @Test
+    fun `a prepared point gives the calls that take the point the same numbers`() {
+        // The sine and cosine of the fix's latitude are taken once and handed to every segment it is
+        // measured against (OPTIMIZATION.md J-23), so the overloads that take them must return the
+        // numbers the plain calls return - to the last bit, not merely close to them.
+        val random = java.util.Random(20261119L)
+        var checked = 0
+        repeat(500) {
+            val start = GeoPoint(42.0 + random.nextDouble(), 1.0 + random.nextDouble())
+            val end = GeoPoint(
+                start.latitude + random.nextDouble() * 0.01 - 0.005,
+                start.longitude + random.nextDouble() * 0.01 - 0.005,
+            )
+            val point = GeoPoint(
+                start.latitude + random.nextDouble() * 0.02 - 0.01,
+                start.longitude + random.nextDouble() * 0.02 - 0.01,
+            )
+            val prepared = GeoMath.prepare(point)
+            val length = GeoMath.distanceMeters(start, end)
+            val bearing = GeoMath.bearingDegrees(start, end)
+
+            assertEquals(
+                "distance from $start to $point",
+                GeoMath.distanceMeters(start, point),
+                GeoMath.distanceMeters(start, prepared),
+                0.0,
+            )
+            assertEquals(
+                "distance from $point to $start",
+                GeoMath.distanceMeters(point, start),
+                GeoMath.distanceMeters(prepared, start),
+                0.0,
+            )
+            assertEquals(
+                "bearing from $start to $point",
+                GeoMath.bearingDegrees(start, point),
+                GeoMath.bearingDegrees(start, prepared),
+                0.0,
+            )
+            assertEquals(
+                "cross-track distance of $point from $start-$end",
+                GeoMath.crossTrackDistanceMeters(point, start, end, length, bearing),
+                GeoMath.crossTrackDistanceMeters(prepared, start, end, length, bearing),
+                0.0,
+            )
+            val plain = GeoMath.projectOnSegment(point, start, end, length, bearing)
+            val supplied = GeoMath.projectOnSegment(prepared, start, end, length, bearing)
+            assertEquals("along-track distance for $point", plain.alongMeters, supplied.alongMeters, 0.0)
+            assertEquals("snapped point for $point", plain.snappedPoint, supplied.snappedPoint)
+            assertEquals("segment length", plain.segmentLengthMeters, supplied.segmentLengthMeters, 0.0)
+            checked++
+        }
+        assertEquals("the loop must have run", 500, checked)
+    }
+
+    @Test
+    fun `a prepared point cannot turn a degenerate segment into a direction`() {
+        // Same rule the segment pair follows: a segment shorter than half a metre has no direction,
+        // and handing the point's latitude terms over does not give it one.
+        val point = GeoPoint(42.5180, 1.5270)
+        val prepared = GeoMath.prepare(point)
+        val length = GeoMath.distanceMeters(andorraLaVella, andorraLaVella)
+        val bearing = GeoMath.bearingDegrees(andorraLaVella, andorraLaVella)
+        assertEquals(
+            "a degenerate segment is measured to its own start",
+            GeoMath.distanceMeters(point, andorraLaVella),
+            GeoMath.crossTrackDistanceMeters(prepared, andorraLaVella, andorraLaVella, length, bearing),
+            0.0,
+        )
+        val projection = GeoMath.projectOnSegment(prepared, andorraLaVella, andorraLaVella, length, bearing)
+        assertEquals(0.0, projection.alongMeters, 1e-12)
+        assertEquals(andorraLaVella, projection.snappedPoint)
+    }
+
+    @Test
     fun `bounds contain and expand correctly`() {
         val bounds = GeoBounds(42.42, 1.41, 42.66, 1.79)
         assertTrue(bounds.contains(andorraLaVella))

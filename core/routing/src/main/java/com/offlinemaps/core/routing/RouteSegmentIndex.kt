@@ -135,9 +135,16 @@ internal class RouteSegmentIndex(
      * it, or -1 when the geometry has no segments or when the nearest one is further away than
      * [MAX_SEARCH_METERS].
      */
-    fun nearestSegment(point: GeoPoint): Int {
+    fun nearestSegment(point: GeoPoint): Int = nearestSegment(GeoMath.prepare(point))
+
+    /**
+     * The same lookup for a fix whose latitude terms the caller has already taken
+     * (OPTIMIZATION.md J-23): the scan measures the fix against every segment it visits, and the
+     * distance and the bearing each read those terms.
+     */
+    fun nearestSegment(point: GeoMath.PreparedPoint): Int {
         if (segmentCount == 0) return -1
-        val cosLat = cosLatitude(point)
+        val cosLat = cosLatitude(point.point)
         var best = Hit.NONE
         var radius = min(max(START_RADIUS_METERS, 1.25 * cellDiagonalMeters), MAX_SEARCH_METERS)
         while (true) {
@@ -156,20 +163,20 @@ internal class RouteSegmentIndex(
         }
     }
 
-    private fun scan(point: GeoPoint, radius: Double, cosLat: Double, start: Hit): Hit {
+    private fun scan(point: GeoMath.PreparedPoint, radius: Double, cosLat: Double, start: Hit): Hit {
         val dLat = radius / metersPerDegree
         val dLon = radius / (metersPerDegree * cosLat)
-        val rowLo = rowOf(point.latitude - dLat)
-        val rowHi = rowOf(point.latitude + dLat)
-        val colLo = colOf(point.longitude - dLon)
-        val colHi = colOf(point.longitude + dLon)
+        val rowLo = rowOf(point.point.latitude - dLat)
+        val rowHi = rowOf(point.point.latitude + dLat)
+        val colLo = colOf(point.point.longitude - dLon)
+        val colHi = colOf(point.point.longitude + dLon)
         var best = start
         for (row in rowLo..rowHi) {
             for (col in colLo..colHi) {
                 val segments = cells[key(row, col)] ?: continue
                 // A cell that cannot be closer than the best segment so far cannot hold a better
                 // answer; skipping it is what keeps a fix that is a kilometre off the route cheap.
-                if (lowerBoundMeters(point, row, col, cosLat) > min(radius, best.distanceMeters)) {
+                if (lowerBoundMeters(point.point, row, col, cosLat) > min(radius, best.distanceMeters)) {
                     continue
                 }
                 for (segment in segments) {

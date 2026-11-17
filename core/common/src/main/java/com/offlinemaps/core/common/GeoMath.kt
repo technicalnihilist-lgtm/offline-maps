@@ -101,6 +101,61 @@ object GeoMath {
         projectOnSegment(point, start, end, distanceMeters(start, end), bearingDegrees(start, end))
 
     /**
+     * A point with the sine and cosine of its latitude already taken.
+     *
+     * Those two numbers depend on the point alone, and every great-circle helper here reads them - the
+     * haversine distance reads `cos(lat2)`, the initial bearing reads `sin(lat2)` and `cos(lat2)`.
+     * Measuring many segments against one point therefore took the same two sines once per segment,
+     * which is what the follow window of a navigation session does: forty-odd segments measured
+     * against the same fix, every fix, so a hundred-odd trigonometric calls a second for numbers that
+     * belong to the fix (OPTIMIZATION.md J-23). [prepare] takes them once and the overloads below read
+     * them instead of taking them again.
+     *
+     * The values are the ones the calls that take a [GeoPoint] compute, from the same expression, so
+     * every overload returns the number its [GeoPoint] twin returns - to the last bit.
+     */
+    class PreparedPoint internal constructor(
+        val point: GeoPoint,
+        /** `sin` of the point's latitude in radians. */
+        val sinLatitude: Double,
+        /** `cos` of the point's latitude in radians. */
+        val cosLatitude: Double,
+    )
+
+    /** [point] with the sine and cosine of its latitude taken once, for the overloads that take it. */
+    fun prepare(point: GeoPoint): PreparedPoint {
+        val lat = point.latitude * DEG
+        return PreparedPoint(point, sin(lat), cos(lat))
+    }
+
+    /** [distanceMeters] with the second point's latitude terms taken by the caller. */
+    fun distanceMeters(a: GeoPoint, b: PreparedPoint): Double {
+        val dLat = (b.point.latitude - a.latitude) * DEG
+        val dLon = (b.point.longitude - a.longitude) * DEG
+        val lat1 = a.latitude * DEG
+        val h = sin(dLat / 2).let { it * it } + cos(lat1) * b.cosLatitude * sin(dLon / 2).let { it * it }
+        return 2 * EARTH_RADIUS_M * asin(sqrt(h).coerceIn(0.0, 1.0))
+    }
+
+    /** [distanceMeters] with the first point's latitude terms taken by the caller. */
+    fun distanceMeters(a: PreparedPoint, b: GeoPoint): Double {
+        val dLat = (b.latitude - a.point.latitude) * DEG
+        val dLon = (b.longitude - a.point.longitude) * DEG
+        val lat2 = b.latitude * DEG
+        val h = sin(dLat / 2).let { it * it } + a.cosLatitude * cos(lat2) * sin(dLon / 2).let { it * it }
+        return 2 * EARTH_RADIUS_M * asin(sqrt(h).coerceIn(0.0, 1.0))
+    }
+
+    /** [bearingDegrees] with the second point's latitude terms taken by the caller. */
+    fun bearingDegrees(a: GeoPoint, b: PreparedPoint): Double {
+        val lat1 = a.latitude * DEG
+        val dLon = (b.point.longitude - a.longitude) * DEG
+        val y = sin(dLon) * b.cosLatitude
+        val x = cos(lat1) * b.sinLatitude - sin(lat1) * b.cosLatitude * cos(dLon)
+        return (atan2(y, x) / DEG + 360.0) % 360.0
+    }
+
+    /**
      * The same projection, with the segment's own two measures - its length and its bearing from
      * [start] - supplied by the caller rather than measured here (OPTIMIZATION.md J-22).
      *
@@ -112,6 +167,24 @@ object GeoMath {
      */
     fun projectOnSegment(
         point: GeoPoint,
+        start: GeoPoint,
+        end: GeoPoint,
+        segmentLengthMeters: Double,
+        startBearingDegrees: Double,
+    ): SegmentProjection = projectOnSegment(
+        prepare(point),
+        start,
+        end,
+        segmentLengthMeters,
+        startBearingDegrees,
+    )
+
+    /**
+     * The same projection again, with the point's latitude terms taken once by the caller
+     * (OPTIMIZATION.md J-23). Same arithmetic, same answer.
+     */
+    fun projectOnSegment(
+        point: PreparedPoint,
         start: GeoPoint,
         end: GeoPoint,
         segmentLengthMeters: Double,
@@ -163,6 +236,26 @@ object GeoMath {
      */
     fun crossTrackDistanceMeters(
         point: GeoPoint,
+        start: GeoPoint,
+        end: GeoPoint,
+        segmentLengthMeters: Double,
+        startBearingDegrees: Double,
+    ): Double = crossTrackDistanceMeters(
+        prepare(point),
+        start,
+        end,
+        segmentLengthMeters,
+        startBearingDegrees,
+    )
+
+    /**
+     * The same distance again, with the point's latitude terms taken once by the caller
+     * (OPTIMIZATION.md J-23). A caller that measures one point against many segments - the follow
+     * window, the grid scan - used to take the point's cosine in the distance and its sine and cosine
+     * in the bearing, per segment. Same arithmetic, same answer.
+     */
+    fun crossTrackDistanceMeters(
+        point: PreparedPoint,
         start: GeoPoint,
         end: GeoPoint,
         segmentLengthMeters: Double,

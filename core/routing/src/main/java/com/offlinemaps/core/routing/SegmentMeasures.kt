@@ -68,7 +68,14 @@ internal class SegmentMeasures(private val geometry: List<GeoPoint>) {
      * [GeoMath.projectOnSegment] returns for the segment's two endpoints, with the segment's own
      * measures reused instead of re-measured (OPTIMIZATION.md J-22).
      */
-    fun projectOnSegment(point: GeoPoint, index: Int): GeoMath.SegmentProjection {
+    fun projectOnSegment(point: GeoPoint, index: Int): GeoMath.SegmentProjection =
+        projectOnSegment(GeoMath.prepare(point), index)
+
+    /**
+     * The same projection, with the point's latitude terms taken once by the caller rather than once
+     * per segment (OPTIMIZATION.md J-23).
+     */
+    fun projectOnSegment(point: GeoMath.PreparedPoint, index: Int): GeoMath.SegmentProjection {
         measure(index)
         return GeoMath.projectOnSegment(
             point,
@@ -84,7 +91,14 @@ internal class SegmentMeasures(private val geometry: List<GeoPoint>) {
      * [GeoMath.crossTrackDistanceMeters] returns for the segment's two endpoints, with the
      * segment's own measures reused instead of re-measured.
      */
-    fun crossTrackDistanceMeters(point: GeoPoint, index: Int): Double {
+    fun crossTrackDistanceMeters(point: GeoPoint, index: Int): Double =
+        crossTrackDistanceMeters(GeoMath.prepare(point), index)
+
+    /**
+     * The same distance, with the point's latitude terms taken once by the caller rather than once
+     * per segment (OPTIMIZATION.md J-23).
+     */
+    fun crossTrackDistanceMeters(point: GeoMath.PreparedPoint, index: Int): Double {
         measure(index)
         return GeoMath.crossTrackDistanceMeters(
             point,

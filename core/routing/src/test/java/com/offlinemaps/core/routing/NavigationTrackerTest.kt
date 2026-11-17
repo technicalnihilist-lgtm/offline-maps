@@ -403,6 +403,45 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `a fix takes its latitude terms once however many segments it measures`() {
+        // The sine and cosine of the fix's latitude were taken once per segment by the distance and
+        // again by the bearing, so the follow window took them ~46 times a fix (OPTIMIZATION.md
+        // J-23). One preparation per fix is the whole point of the change, and the numbers on screen
+        // must be the ones the measuring calls give.
+        val tracker = NavigationTracker(plan())
+        val geometry = plan().geometry
+        val fix = GeoPoint(42.5000, 1.5033)
+        val state = tracker.onLocation(
+            LocationFix(fix, accuracyMeters = 5f, bearingDegrees = 90f, timestampMillis = 1_000L),
+        )!!
+        assertEquals("the fix prepared its latitude terms more than once", 1L, tracker.fixPointsPrepared)
+        assertTrue(
+            "the window measured ${tracker.segmentMeasureRequests} segments, which is no work to have saved",
+            tracker.segmentMeasureRequests > 10,
+        )
+
+        val index0 = (0..geometry.size - 2).minByOrNull {
+            GeoMath.crossTrackDistanceMeters(fix, geometry[it], geometry[it + 1])
+        }!!
+        val reference = GeoMath.projectOnSegment(fix, geometry[index0], geometry[index0 + 1])
+        assertEquals("snapped point", reference.snappedPoint, state.snappedPoint)
+        assertEquals(
+            "along-route distance",
+            plan().cumulativeMeters[index0] + reference.clampedAlongMeters,
+            state.alongRouteMeters,
+            1e-9,
+        )
+
+        // A second fix prepares again - once, not once per segment - and the total stays one per fix.
+        tracker.onLocation(LocationFix(GeoPoint(42.5000, 1.5040), accuracyMeters = 5f, timestampMillis = 2_000L))
+        assertEquals(2L, tracker.fixPointsPrepared)
+        assertTrue(
+            "two fixes asked for far more segments than they prepared points for",
+            tracker.segmentMeasureRequests > tracker.fixPointsPrepared,
+        )
+    }
+
+    @Test
     fun `should recalculate helper ignores arrival`() {
         val arrived = NavigationState(
             alongRouteMeters = 1480.0, remainingMeters = 2.0, remainingSeconds = 1,

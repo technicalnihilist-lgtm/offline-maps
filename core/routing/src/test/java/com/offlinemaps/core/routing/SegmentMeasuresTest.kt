@@ -109,6 +109,41 @@ class SegmentMeasuresTest {
     }
 
     @Test
+    fun `a prepared fix is measured against a segment exactly as the plain fix is`() {
+        // The fix's latitude terms are taken once per fix and handed to every segment it is measured
+        // against (OPTIMIZATION.md J-23). The answer must be the one the plain call gives, and the
+        // segment must be measured and asked for exactly as often.
+        val points = geometry()
+        val plain = SegmentMeasures(points)
+        val preparedMeasures = SegmentMeasures(points)
+        val random = java.util.Random(20261121L)
+        repeat(50) {
+            val fix = GeoMath.destination(
+                points[3],
+                random.nextDouble() * 60.0,
+                random.nextDouble() * 360.0,
+            )
+            val prepared = GeoMath.prepare(fix)
+            assertEquals(
+                "cross-track distance for $fix",
+                plain.crossTrackDistanceMeters(fix, 3),
+                preparedMeasures.crossTrackDistanceMeters(prepared, 3),
+                0.0,
+            )
+            val expected = plain.projectOnSegment(fix, 3)
+            val projection = preparedMeasures.projectOnSegment(prepared, 3)
+            assertEquals("along-track distance for $fix", expected.alongMeters, projection.alongMeters, 0.0)
+            assertEquals("snapped point for $fix", expected.snappedPoint, projection.snappedPoint)
+        }
+        assertEquals("the segment was measured more than once", 1L, preparedMeasures.measurements)
+        assertEquals(
+            "one ask per call, prepared or not",
+            plain.measureRequests,
+            preparedMeasures.measureRequests,
+        )
+    }
+
+    @Test
     fun `a scan of the whole geometry measures each segment exactly once`() {
         val points = geometry()
         val measures = SegmentMeasures(points)
