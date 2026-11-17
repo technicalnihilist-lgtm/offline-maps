@@ -322,6 +322,54 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `the next manoeuvre and the current street are what the two scans gave`() {
+        // The fix path answers two questions about one boundary - the first manoeuvre ahead of the
+        // fix and the last one behind it - and used to answer them with two separate walks of the
+        // list (`indexOfFirst` and `lastOrNull`). One pass gives the same answers for a list in any
+        // order, so the list here is deliberately not in distance order (OPTIMIZATION.md J-21).
+        val distances = listOf(0.0, 640.0, 310.0, 1480.0, 990.0, 1200.0, 1480.0, 500.0)
+        val maneuvers = distances.mapIndexed { i, d ->
+            Maneuver(ManeuverType.CONTINUE, 0, "Street $i", 0.0, 0, 0, d, "Manoeuvre $i")
+        }
+        val plan = plan().copy(maneuvers = maneuvers)
+        var checked = 0
+        for (point in plan.geometry) {
+            val state = NavigationTracker(plan)
+                .onLocation(LocationFix(point, accuracyMeters = 5f)) ?: continue
+            val passed = state.alongRouteMeters + 1.0
+            val expectedNext = maneuvers.indexOfFirst { it.distanceFromStartMeters > passed }
+                .let { if (it < 0) maneuvers.lastIndex else it }
+            val expectedStreet = maneuvers.lastOrNull { it.distanceFromStartMeters <= passed }?.streetName
+            assertEquals(
+                "next manoeuvre at ${state.alongRouteMeters} m along the route",
+                expectedNext,
+                state.nextManeuverIndex,
+            )
+            assertEquals(
+                "current street at ${state.alongRouteMeters} m along the route",
+                expectedStreet,
+                state.currentStreetName,
+            )
+            checked++
+        }
+        assertEquals("every geometry point must have been checked", plan.geometry.size, checked)
+    }
+
+    @Test
+    fun `a fix walks the manoeuvre list once and takes no iterator from it`() {
+        // Two walks became one, and the one is an index loop: nothing on the fix path may ask the
+        // manoeuvre list for an iterator, which is what the two scans each did (OPTIMIZATION.md
+        // J-21). The state is asserted too, so a loop that skipped the list cannot pass as cheap.
+        val counting = CountingList(plan().maneuvers)
+        val plan = plan().copy(maneuvers = counting)
+        val state = NavigationTracker(plan)
+            .onLocation(LocationFix(GeoPoint(42.5000, 1.5050), accuracyMeters = 5f))!!
+        assertEquals("the fix path iterated the manoeuvres", 0, counting.iterators)
+        assertEquals(1, state.nextManeuverIndex)
+        assertEquals("Start street", state.currentStreetName)
+    }
+
+    @Test
     fun `should recalculate helper ignores arrival`() {
         val arrived = NavigationState(
             alongRouteMeters = 1480.0, remainingMeters = 2.0, remainingSeconds = 1,
@@ -330,5 +378,19 @@ class NavigationTrackerTest {
             snappedPoint = c, currentStreetName = null, gpsSignalWeak = false, headingDegrees = 0.0,
         )
         assertFalse(NavigationTracker.shouldRecalculate(arrived))
+    }
+}
+
+/**
+ * A list that counts how often it is walked through an [iterator], so a test can tell a single
+ * index pass from a `for` loop or an `indexOfFirst`/`lastOrNull` over the same elements.
+ */
+private class CountingList<T>(private val backing: List<T>) : List<T> by backing {
+    var iterators: Int = 0
+        private set
+
+    override fun iterator(): Iterator<T> {
+        iterators++
+        return backing.iterator()
     }
 }

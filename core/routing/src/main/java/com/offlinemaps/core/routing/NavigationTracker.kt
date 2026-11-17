@@ -160,10 +160,27 @@ class NavigationTracker(
         val alongRoute = baseCumulative + alongSegment
         val remaining = (plan.distanceMeters - alongRoute).coerceAtLeast(0.0)
 
-        // Manoeuvres that are still ahead of us.
-        val nextIndex = plan.maneuvers.indexOfFirst { it.distanceFromStartMeters > alongRoute + 1.0 }
-            .let { if (it < 0) plan.maneuvers.lastIndex else it }
-        val nextManeuver = plan.maneuvers.getOrNull(nextIndex)
+        // Manoeuvres that are still ahead of us, and the last one already behind us, in one pass.
+        // The two used to be separate scans of the whole list (`indexOfFirst` then `lastOrNull`),
+        // each walking the list through its own iterator and its own capturing lambda, so a fix
+        // allocated four objects and traversed the manoeuvres twice to answer two questions about
+        // the same boundary. One index loop answers both, in the order the list is in, and
+        // allocates nothing (OPTIMIZATION.md J-21).
+        val maneuvers = plan.maneuvers
+        val passed = alongRoute + 1.0
+        var firstAhead = -1
+        var lastBehind = -1
+        var m = 0
+        while (m < maneuvers.size) {
+            if (maneuvers[m].distanceFromStartMeters > passed) {
+                if (firstAhead < 0) firstAhead = m
+            } else {
+                lastBehind = m
+            }
+            m++
+        }
+        val nextIndex = if (firstAhead < 0) maneuvers.lastIndex else firstAhead
+        val nextManeuver = maneuvers.getOrNull(nextIndex)
         val distanceToNext = nextManeuver
             ?.let { (it.distanceFromStartMeters - alongRoute).coerceAtLeast(0.0) }
             ?: remaining
@@ -184,9 +201,9 @@ class NavigationTracker(
             (plan.durationSeconds * fraction).toLong()
         }
 
-        val currentStreet = plan.maneuvers
-            .lastOrNull { it.distanceFromStartMeters <= alongRoute + 1.0 }
-            ?.streetName
+        // Same boundary as the loop above, so the street comes from the manoeuvre it found there
+        // rather than from a second traversal of the list.
+        val currentStreet = if (lastBehind >= 0) maneuvers[lastBehind].streetName else null
 
         return NavigationState(
             alongRouteMeters = alongRoute,
