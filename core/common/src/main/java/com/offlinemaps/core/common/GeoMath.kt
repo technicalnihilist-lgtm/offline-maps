@@ -62,19 +62,30 @@ object GeoMath {
      * Perpendicular distance in metres from [point] to the segment [start]-[end]. Points that
      * project outside the segment are measured to the nearer endpoint. This is the primitive
      * behind off-route detection.
+     *
+     * Every term the answer needs is computed once (OPTIMIZATION.md J-18). The along-track
+     * projection used to be taken from [alongTrackDistanceMeters] and the cross-track distance then
+     * rebuilt from the same inputs, so one call measured the segment length, the bearing along the
+     * segment, the distance to the point and the bearing to it twice each - eight great-circle
+     * calls where four are needed, and the same sine and arc-sine twice. `NavigationTracker` makes
+     * this call once per segment in its follow window on every fix, and once per segment of the
+     * whole route for a fix that lands far from it, so the duplicated work is paid at the rate fixes
+     * arrive. The arithmetic below is the arithmetic those two functions did, term for term, so the
+     * distance is the same number it was.
      */
     fun crossTrackDistanceMeters(point: GeoPoint, start: GeoPoint, end: GeoPoint): Double {
         val segLength = distanceMeters(start, end)
         if (segLength < 0.5) return distanceMeters(point, start)
-        val along = alongTrackDistanceMeters(point, start, end)
-        if (along < 0.0) return distanceMeters(point, start)
-        if (along > segLength) return distanceMeters(point, end)
-        val d13 = distanceMeters(start, point) / EARTH_RADIUS_M
+        val toPoint = distanceMeters(start, point)
+        val d13 = toPoint / EARTH_RADIUS_M
         if (d13 == 0.0) return 0.0
-        val dxt = asin(
-            (sin(d13) * sin((bearingDegrees(start, point) - bearingDegrees(start, end)) * DEG))
-                .coerceIn(-1.0, 1.0),
-        )
+        val theta12 = bearingDegrees(start, end)
+        val theta13 = bearingDegrees(start, point)
+        val dxt = asin((sin(d13) * sin((theta13 - theta12) * DEG)).coerceIn(-1.0, 1.0))
+        val dat = acos((cos(d13) / cos(dxt)).coerceIn(-1.0, 1.0)) * EARTH_RADIUS_M
+        val along = if (abs(angleDelta(theta12, theta13)) > 90.0) -dat else dat
+        if (along < 0.0) return toPoint
+        if (along > segLength) return distanceMeters(point, end)
         return abs(dxt) * EARTH_RADIUS_M
     }
 

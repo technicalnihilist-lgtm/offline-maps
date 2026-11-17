@@ -84,6 +84,77 @@ class GeoMathTest {
         assertTrue(point.toOsmLink().startsWith("https://www.openstreetmap.org/?mlat=42.506900"))
     }
 
+    /**
+     * The cross-track distance as it was computed before OPTIMIZATION.md J-18: the along-track
+     * projection from [GeoMath.alongTrackDistanceMeters], then the cross-track term rebuilt from the
+     * same inputs. Kept here as the reference the single-pass version is measured against.
+     */
+    private fun longFormCrossTrack(point: GeoPoint, start: GeoPoint, end: GeoPoint): Double {
+        val segLength = GeoMath.distanceMeters(start, end)
+        if (segLength < 0.5) return GeoMath.distanceMeters(point, start)
+        val along = GeoMath.alongTrackDistanceMeters(point, start, end)
+        if (along < 0.0) return GeoMath.distanceMeters(point, start)
+        if (along > segLength) return GeoMath.distanceMeters(point, end)
+        val d13 = GeoMath.distanceMeters(start, point) / 6_371_008.8
+        if (d13 == 0.0) return 0.0
+        val dxt = Math.asin(
+            (
+                Math.sin(d13) * Math.sin(
+                    (GeoMath.bearingDegrees(start, point) - GeoMath.bearingDegrees(start, end)) *
+                        (Math.PI / 180.0),
+                )
+                ).coerceIn(-1.0, 1.0),
+        )
+        return Math.abs(dxt) * 6_371_008.8
+    }
+
+    @Test
+    fun `cross track distance is the number the long form produced`() {
+        // A single-pass call replaced two passes over the same inputs (OPTIMIZATION.md J-18), so the
+        // answer has to be the one the two passes produced - not merely close to it.
+        val random = java.util.Random(20261117L)
+        var checked = 0
+        repeat(500) {
+            val start = GeoPoint(42.0 + random.nextDouble(), 1.0 + random.nextDouble())
+            val end = GeoPoint(
+                start.latitude + random.nextDouble() * 0.01 - 0.005,
+                start.longitude + random.nextDouble() * 0.01 - 0.005,
+            )
+            val point = GeoPoint(
+                start.latitude + random.nextDouble() * 0.02 - 0.01,
+                start.longitude + random.nextDouble() * 0.02 - 0.01,
+            )
+            assertEquals(
+                "cross-track distance for $point on $start-$end",
+                longFormCrossTrack(point, start, end),
+                GeoMath.crossTrackDistanceMeters(point, start, end),
+                1e-9,
+            )
+            checked++
+        }
+        assertEquals("the loop must have run", 500, checked)
+    }
+
+    @Test
+    fun `cross track distance handles a degenerate segment and a point on it`() {
+        val elsewhere = GeoPoint(42.5180, 1.5270)
+        // A segment of no length has no direction to project onto: the answer is the distance to it.
+        assertEquals(
+            GeoMath.distanceMeters(elsewhere, andorraLaVella),
+            GeoMath.crossTrackDistanceMeters(elsewhere, andorraLaVella, andorraLaVella),
+            1e-9,
+        )
+        // A point that is the segment's own start is on the segment.
+        assertEquals(0.0, GeoMath.crossTrackDistanceMeters(andorraLaVella, andorraLaVella, escaldes), 1e-9)
+        // Past the end, the answer is the distance to that end, not to the start.
+        val beyond = GeoPoint(42.5300, 1.5340)
+        assertEquals(
+            GeoMath.distanceMeters(beyond, escaldes),
+            GeoMath.crossTrackDistanceMeters(beyond, andorraLaVella, escaldes),
+            1e-9,
+        )
+    }
+
     @Test
     fun `bounds contain and expand correctly`() {
         val bounds = GeoBounds(42.42, 1.41, 42.66, 1.79)

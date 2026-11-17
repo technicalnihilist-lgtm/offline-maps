@@ -129,7 +129,7 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **693 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Unit tests | **695 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
@@ -287,7 +287,7 @@ explicitly excluded (`data_extraction_rules.xml`).
 See [`docs/TESTING.md`](docs/TESTING.md) for the full matrix, what was executed, what passed, and
 what could not run here. Summary of the automated suites:
 
-* `core/common` — spherical geometry, cross-track distance, tile maths, formatters (**37**)
+* `core/common` — spherical geometry, cross-track distance, tile maths, formatters (**39**)
 * `core/offline` — download engine against MockWebServer: resume, 200-ignoring-Range, checksum
   mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry, storage guard, region
   catalogue (**122**)
@@ -303,8 +303,8 @@ what could not run here. Summary of the automated suites:
   that hold startup I/O, imports, logging, the CI workflow, the Room schema export ordering and
   these docs in place (**167**)
 
-Total: **693 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
-per variant — `./gradlew test` runs each module's debug and release suites, so 1,386 executions.
+Total: **695 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,390 executions.
 `core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
 reach.
 
