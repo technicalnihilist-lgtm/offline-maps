@@ -129,16 +129,39 @@ object GeoMath {
     fun crossTrackDistanceMeters(point: GeoPoint, start: GeoPoint, end: GeoPoint): Double {
         val segLength = distanceMeters(start, end)
         if (segLength < 0.5) return distanceMeters(point, start)
+        return crossTrackDistanceMeters(point, start, end, segLength, bearingDegrees(start, end))
+    }
+
+    /**
+     * The same distance, with the segment's own two measures - its length and its bearing from
+     * [start] - supplied by the caller rather than measured here (OPTIMIZATION.md J-20).
+     *
+     * Those two numbers belong to the segment, not to the point being measured, so a caller that
+     * measures many points against the same route (the follow window of a navigation session, or a
+     * grid scan over one geometry) can measure each segment once and reuse the pair for every fix
+     * that touches it. Passing them in is what lets the segment-measure cache in `core:routing`
+     * do that without a second copy of this arithmetic. The result is the one the three-argument
+     * call returns, term for term - the three-argument call is this one with the pair measured just
+     * before it.
+     */
+    fun crossTrackDistanceMeters(
+        point: GeoPoint,
+        start: GeoPoint,
+        end: GeoPoint,
+        segmentLengthMeters: Double,
+        startBearingDegrees: Double,
+    ): Double {
+        if (segmentLengthMeters < 0.5) return distanceMeters(point, start)
         val toPoint = distanceMeters(start, point)
         val d13 = toPoint / EARTH_RADIUS_M
         if (d13 == 0.0) return 0.0
-        val theta12 = bearingDegrees(start, end)
+        val theta12 = startBearingDegrees
         val theta13 = bearingDegrees(start, point)
         val dxt = asin((sin(d13) * sin((theta13 - theta12) * DEG)).coerceIn(-1.0, 1.0))
         val dat = acos((cos(d13) / cos(dxt)).coerceIn(-1.0, 1.0)) * EARTH_RADIUS_M
         val along = if (abs(angleDelta(theta12, theta13)) > 90.0) -dat else dat
         if (along < 0.0) return toPoint
-        if (along > segLength) return distanceMeters(point, end)
+        if (along > segmentLengthMeters) return distanceMeters(point, end)
         return abs(dxt) * EARTH_RADIUS_M
     }
 

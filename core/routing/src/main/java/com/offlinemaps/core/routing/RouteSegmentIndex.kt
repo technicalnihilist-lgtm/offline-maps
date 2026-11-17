@@ -36,7 +36,15 @@ import kotlin.math.min
  * fixes. Building it is O(n) and it happens lazily, so a session that never leaves the follow window
  * never pays for it.
  */
-internal class RouteSegmentIndex(private val geometry: List<GeoPoint>) {
+internal class RouteSegmentIndex(
+    private val geometry: List<GeoPoint>,
+    /**
+     * The per-segment length and bearing every scan needs. The tracker passes the instance it also
+     * uses for its follow window, so a segment measured for one path is measured for both
+     * (OPTIMIZATION.md J-20); a test that builds an index on its own gets a fresh one.
+     */
+    private val measures: SegmentMeasures = SegmentMeasures(geometry),
+) {
 
     /** Number of segments (point pairs) in the geometry. */
     val segmentCount: Int = (geometry.size - 1).coerceAtLeast(0)
@@ -166,11 +174,7 @@ internal class RouteSegmentIndex(private val geometry: List<GeoPoint>) {
                 }
                 for (segment in segments) {
                     evaluations++
-                    val d = GeoMath.crossTrackDistanceMeters(
-                        point,
-                        geometry[segment],
-                        geometry[segment + 1],
-                    )
+                    val d = measures.crossTrackDistanceMeters(point, segment)
                     if (d < best.distanceMeters) best = Hit(segment, d)
                 }
             }

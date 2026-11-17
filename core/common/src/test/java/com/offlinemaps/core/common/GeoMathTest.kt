@@ -155,6 +155,58 @@ class GeoMathTest {
         )
     }
 
+    @Test
+    fun `cross track distance from a segment's own measures is the same number`() {
+        // The follow window and the grid scan measure each segment once and hand the pair back
+        // (OPTIMIZATION.md J-20), so the overload that takes them has to answer exactly what the
+        // call that measures them itself answers.
+        val random = java.util.Random(20261120L)
+        var checked = 0
+        repeat(500) {
+            val start = GeoPoint(42.0 + random.nextDouble(), 1.0 + random.nextDouble())
+            val end = GeoPoint(
+                start.latitude + random.nextDouble() * 0.01 - 0.005,
+                start.longitude + random.nextDouble() * 0.01 - 0.005,
+            )
+            val point = GeoPoint(
+                start.latitude + random.nextDouble() * 0.02 - 0.01,
+                start.longitude + random.nextDouble() * 0.02 - 0.01,
+            )
+            assertEquals(
+                "cross-track distance for $point on $start-$end",
+                GeoMath.crossTrackDistanceMeters(point, start, end),
+                GeoMath.crossTrackDistanceMeters(
+                    point,
+                    start,
+                    end,
+                    GeoMath.distanceMeters(start, end),
+                    GeoMath.bearingDegrees(start, end),
+                ),
+                0.0,
+            )
+            checked++
+        }
+        assertEquals("the loop must have run", 500, checked)
+    }
+
+    @Test
+    fun `a supplied bearing does not change the answer for a degenerate segment`() {
+        // A segment shorter than half a metre has no direction to project onto, so the answer is the
+        // distance to it whatever bearing the caller measured for it.
+        val elsewhere = GeoPoint(42.5180, 1.5270)
+        assertEquals(
+            GeoMath.distanceMeters(elsewhere, andorraLaVella),
+            GeoMath.crossTrackDistanceMeters(elsewhere, andorraLaVella, andorraLaVella, 0.0, 137.0),
+            1e-9,
+        )
+        // A point that is the segment's own start is on the segment.
+        assertEquals(
+            0.0,
+            GeoMath.crossTrackDistanceMeters(andorraLaVella, andorraLaVella, escaldes, 1_100.0, 90.0),
+            1e-9,
+        )
+    }
+
     /**
      * The snapped point as `NavigationTracker` produced it before OPTIMIZATION.md J-19: the
      * along-track distance from [GeoMath.alongTrackDistanceMeters], clamped to the segment, advanced

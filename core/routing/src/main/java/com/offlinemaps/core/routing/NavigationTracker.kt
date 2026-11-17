@@ -66,6 +66,17 @@ class NavigationTracker(
     private var segmentIndex: RouteSegmentIndex? = null
 
     /**
+     * Per-segment length and bearing, measured the first time a fix touches a segment and reused
+     * after that. The follow window re-measures nothing on a later fix, and the index scans through
+     * the same instance, so a segment is measured once per plan however many fixes cross it
+     * (OPTIMIZATION.md J-20).
+     */
+    private var segmentMeasures: SegmentMeasures? = null
+
+    /** Segments whose length and bearing have been measured so far. Diagnostics only. */
+    internal val segmentMeasurements: Long get() = segmentMeasures?.measurements ?: 0L
+
+    /**
      * Refuses a fix older than the last accepted one. A late fix from a batched or replayed stream
      * used to move the matched segment, the off-route counter and the arrival flag backwards.
      */
@@ -76,6 +87,7 @@ class NavigationTracker(
     fun updatePlan(newPlan: RoutePlan) {
         plan = newPlan
         segmentIndex = null
+        segmentMeasures = null
         lastGeometryIndex = 0
         offRouteCount = 0
         arrived = false
@@ -115,24 +127,21 @@ class NavigationTracker(
         var bestDistance = Double.MAX_VALUE
         val fastStart = (lastGeometryIndex - 5).coerceAtLeast(0)
         val fastEnd = min(geometry.size - 2, lastGeometryIndex + window)
+        val segments = measures()
         for (i in fastStart..fastEnd) {
-            val d = GeoMath.crossTrackDistanceMeters(fix.point, geometry[i], geometry[i + 1])
+            val d = segments.crossTrackDistanceMeters(fix.point, i)
             if (d < bestDistance) { bestDistance = d; bestIndex = i }
         }
         if (bestDistance > FAR_FROM_WINDOW_METERS) {
             val candidate = searchIndex().nearestSegment(fix.point)
             if (candidate >= 0) {
-                val d = GeoMath.crossTrackDistanceMeters(
-                    fix.point,
-                    geometry[candidate],
-                    geometry[candidate + 1],
-                )
+                val d = segments.crossTrackDistanceMeters(fix.point, candidate)
                 if (d < bestDistance) { bestDistance = d; bestIndex = candidate }
             } else {
                 // Further from the route than the index searches: kilometres away, which means a
                 // bad fix or a jump to another place. Rare enough that scanning is the right answer.
                 for (i in 0..geometry.size - 2) {
-                    val d = GeoMath.crossTrackDistanceMeters(fix.point, geometry[i], geometry[i + 1])
+                    val d = segments.crossTrackDistanceMeters(fix.point, i)
                     if (d < bestDistance) { bestDistance = d; bestIndex = i }
                 }
             }
@@ -196,7 +205,7 @@ class NavigationTracker(
             gpsSignalWeak = weak,
             headingDegrees = fix.bearingDegrees?.toDouble()
                 ?: if (plan.geometry.size > bestIndex + 1) {
-                    GeoMath.bearingDegrees(geometry[bestIndex], geometry[bestIndex + 1])
+                    segments.bearingDegrees(bestIndex)
                 } else 0.0,
         )
     }
@@ -213,7 +222,10 @@ class NavigationTracker(
             ?: 0.0
 
     private fun searchIndex(): RouteSegmentIndex =
-        segmentIndex ?: RouteSegmentIndex(plan.geometry).also { segmentIndex = it }
+        segmentIndex ?: RouteSegmentIndex(plan.geometry, measures()).also { segmentIndex = it }
+
+    private fun measures(): SegmentMeasures =
+        segmentMeasures ?: SegmentMeasures(plan.geometry).also { segmentMeasures = it }
 
     private fun isWeak(fix: LocationFix): Boolean =
         fix.accuracyMeters?.let { it > config.weakAccuracyMeters } ?: false

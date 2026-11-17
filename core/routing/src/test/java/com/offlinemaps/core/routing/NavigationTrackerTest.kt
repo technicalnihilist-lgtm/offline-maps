@@ -294,6 +294,34 @@ class NavigationTrackerTest {
     }
 
     @Test
+    fun `a fix does not re-measure the segments of its follow window`() {
+        // The window slides a segment at a time, so a session measures each segment of the route at
+        // most once instead of measuring all forty-odd segments of the window on every fix
+        // (OPTIMIZATION.md J-20).
+        val tracker = NavigationTracker(plan())
+        val segments = plan().geometry.size - 1
+        for (i in 0..20) {
+            tracker.onLocation(
+                LocationFix(
+                    GeoPoint(a.latitude, a.longitude + (b.longitude - a.longitude) * i / 20.0),
+                    accuracyMeters = 5f,
+                    timestampMillis = 1_000L + i,
+                ),
+            )
+        }
+        val afterWalking = tracker.segmentMeasurements
+        assertTrue(
+            "measured $afterWalking segments over 21 fixes, the plan has only $segments",
+            afterWalking <= segments.toLong(),
+        )
+        // The next fix looks at the same window, so it adds nothing to the count.
+        tracker.onLocation(
+            LocationFix(GeoPoint(a.latitude, b.longitude), accuracyMeters = 5f, timestampMillis = 2_000L),
+        )
+        assertEquals(afterWalking, tracker.segmentMeasurements)
+    }
+
+    @Test
     fun `should recalculate helper ignores arrival`() {
         val arrived = NavigationState(
             alongRouteMeters = 1480.0, remainingMeters = 2.0, remainingSeconds = 1,

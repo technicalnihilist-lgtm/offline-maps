@@ -6,25 +6,25 @@ build-tools 34.0.0, Gradle 8.9 wrapper).
 Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/44032908420> - **success**.
 (The counts below are that run's; the badge on the README links the latest run.)
 
-## Automated tests — 698 tests, 0 failures
+## Automated tests — 705 tests, 0 failures
 
 | Module | Tests |
 |---|---|
 | `app` | 167 |
-| `core/common` | 41 |
+| `core/common` | 43 |
 | `core/map` | 129 |
 | `core/offline` | 122 |
-| `core/routing` | 126 |
+| `core/routing` | 131 |
 | `core/search` | 65 |
 | `core/location` | 33 |
 | `core/data` | 15 |
 | `core/ui` | 0 |
-| **total** | **698** |
+| **total** | **705** |
 
 Counts are read from the Gradle HTML report artifacts of the run (`testDebugUnitTest`), and each
 number is the number of `@Test` methods in that module: `DocsConsistencyTest` counts them in the
 tree and fails if either this table's total or the README's disagrees with it. `./gradlew test` runs
-`testDebugUnitTest` and `testReleaseUnitTest`, so every count above is executed twice — 1,396 test
+`testDebugUnitTest` and `testReleaseUnitTest`, so every count above is executed twice — 1,410 test
 executions — and both variants must be green. The CI run also checks that: `tools/verify_test_results.sh`
 fails the job when a module that carries test sources reported no results (OPTIMIZATION.md J-07).
 
