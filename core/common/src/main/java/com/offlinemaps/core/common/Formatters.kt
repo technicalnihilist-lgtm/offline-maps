@@ -44,8 +44,8 @@ object Formatters {
      *
      * The navigation panel reads this on every fix, and `SimpleDateFormat` parses its pattern and
      * resolves its date symbols in the constructor, so building one per read made a per-second
-     * update pay for a formatter it then threw away (OPTIMIZATION.md J-24). One formatter is kept
-     * per thread and reused, with the mutable `Date` it formats into.
+     * update pay for a formatter it then threw away (OPTIMIZATION.md J-24). One formatter per
+     * pattern is kept per thread and reused, with the mutable `Date` it formats into.
      *
      * `SimpleDateFormat` is not thread-safe, which is why the cache is a `ThreadLocal` rather than a
      * shared field. The cached instance is rebuilt when the pattern, the default locale or the
@@ -53,8 +53,9 @@ object Formatters {
      * exactly as a freshly built formatter would have reflected it.
      */
     fun eta(epochMillis: Long, is24Hour: Boolean = true): String {
+        val slot = if (is24Hour) 0 else 1
         val pattern = if (is24Hour) ETA_24_HOUR else ETA_12_HOUR
-        return etaFormat(pattern, Locale.getDefault(), TimeZone.getDefault().id).format(epochMillis)
+        return etaFormat(slot, pattern, Locale.getDefault(), TimeZone.getDefault().id).format(epochMillis)
     }
 
     /**
@@ -79,15 +80,19 @@ object Formatters {
         }
     }
 
-    private val etaFormats = ThreadLocal<EtaFormat>()
+    /** One slot per pattern: a caller that alternates 24-hour and 12-hour reads keeps both. */
+    private const val ETA_SLOTS = 2
+
+    private val etaFormats = ThreadLocal<Array<EtaFormat?>>()
     private val etaFormatBuildCount = AtomicInteger(0)
 
-    private fun etaFormat(pattern: String, locale: Locale, zoneId: String): EtaFormat {
-        val cached = etaFormats.get()
+    private fun etaFormat(slot: Int, pattern: String, locale: Locale, zoneId: String): EtaFormat {
+        val slots = etaFormats.get() ?: arrayOfNulls<EtaFormat>(ETA_SLOTS).also { etaFormats.set(it) }
+        val cached = slots[slot]
         if (cached != null && cached.matches(pattern, locale, zoneId)) return cached
         val built = EtaFormat(pattern, locale, zoneId)
         etaFormatBuildCount.incrementAndGet()
-        etaFormats.set(built)
+        slots[slot] = built
         return built
     }
 
