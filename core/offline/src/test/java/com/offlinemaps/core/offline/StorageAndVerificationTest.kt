@@ -64,6 +64,51 @@ class StorageAndVerificationTest {
     }
 
     @Test
+    fun `file verifier reads the file once when both checksums are supplied`() {
+        val file = temp.newFile("both.bin")
+        val bytes = ByteArray(200_000) { (it * 31).toByte() }
+        file.writeBytes(bytes)
+        val sha = reference(bytes, "SHA-256")
+        val md5 = reference(bytes, "MD5")
+        val before = FileVerifier.verifyPasses()
+        assertNull(FileVerifier.verify(file, sha, md5))
+        assertEquals(
+            "both checksums must come off one read of the file, not one read each",
+            1,
+            FileVerifier.verifyPasses() - before,
+        )
+    }
+
+    @Test
+    fun `file verifier keeps the sha256 answer ahead of the md5 one`() {
+        val file = temp.newFile("order.bin")
+        val bytes = "payload".toByteArray()
+        file.writeBytes(bytes)
+        val sha = reference(bytes, "SHA-256")
+        val md5 = reference(bytes, "MD5")
+        val before = FileVerifier.verifyPasses()
+        val badSha = FileVerifier.verify(file, "deadbeef", md5)
+        assertNotNull(badSha)
+        assertTrue(badSha!!.contains("SHA-256"))
+        // One read even when the first checksum already decided the answer.
+        assertEquals(1, FileVerifier.verifyPasses() - before)
+        val badMd5 = FileVerifier.verify(file, sha, "deadbeef")
+        assertNotNull(badMd5)
+        assertTrue(badMd5!!.contains("MD5"))
+    }
+
+    @Test
+    fun `file verifier hex matches the formatter for bytes above 0x7f`() {
+        val file = temp.newFile("hex.bin")
+        // 0x00 and 0xff are the two ends of the unsigned range: a signed byte formatted without
+        // masking would turn 0xff into "ffffffff" and a zero-padded byte into one character.
+        val bytes = byteArrayOf(0x00, 0x0f, 0x7f, 0x80.toByte(), 0xff.toByte(), 0x10)
+        file.writeBytes(bytes)
+        assertEquals(reference(bytes, "SHA-256"), FileVerifier.sha256(file))
+        assertEquals(reference(bytes, "MD5"), FileVerifier.md5(file))
+    }
+
+    @Test
     fun `file verifier skips verification when no checksum is supplied`() {
         val file = temp.newFile("any.bin")
         file.writeBytes("payload".toByteArray())
@@ -120,4 +165,8 @@ class StorageAndVerificationTest {
         store.delete("k")
         assertNull(store.find("k"))
     }
+
+    /** The digest text the app has always reported: `%02x` per unsigned byte. */
+    private fun reference(bytes: ByteArray, algorithm: String): String =
+        MessageDigest.getInstance(algorithm).digest(bytes).joinToString("") { "%02x".format(it) }
 }

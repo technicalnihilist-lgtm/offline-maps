@@ -129,7 +129,7 @@ This section is first on purpose. Read it before anything else.
 | Offline search (SQLite FTS4 over a generated places pack) | **Implemented**, SQL verified against real SQLite |
 | Offline routing (GraphHopper 2.4, pre-built graph loaded on device) | **Implemented and integration-tested** against the shipped graph |
 | Turn-by-turn tracking, off-route detection, rerouting, TTS | **Implemented**, core logic unit-tested |
-| Unit tests | **723 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
+| Unit tests | **726 tests, 0 failures** on GitHub Actions (see `docs/TESTING.md`) |
 | Debug APK | **Built by CI and published** on the [latest release](https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest) |
 | Screenshots | **Design renders only** — no emulator available, so no device captures exist |
 
@@ -291,7 +291,7 @@ what could not run here. Summary of the automated suites:
   formatters (**52**)
 * `core/offline` — download engine against MockWebServer: resume, 200-ignoring-Range, checksum
   mismatch, Wi-Fi-only, offline, low storage, 404, pause, cancel, retry, storage guard, region
-  catalogue (**122**)
+  catalogue (**125**)
 * `core/routing` — navigation tracker (off-route, arrival, snapping), guidance announcer, instruction
   mapper, routing-package inspection, the graph-directory fingerprint that notices a reinstalled
   package, and a **real GraphHopper integration test** on the bundled Andorra graph (**138**)
@@ -304,8 +304,8 @@ what could not run here. Summary of the automated suites:
   that hold startup I/O, imports, logging, the CI workflow, the Room schema export ordering and
   these docs in place (**167**)
 
-Total: **723 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
-per variant — `./gradlew test` runs each module's debug and release suites, so 1,446 executions.
+Total: **726 tests, 0 failures** on GitHub Actions (Ubuntu runner, JDK 17, Android SDK 35), counted
+per variant — `./gradlew test` runs each module's debug and release suites, so 1,452 executions.
 `core/ui` has no tests of its own: it is Compose design-system code with no logic a JVM test can
 reach.
 
