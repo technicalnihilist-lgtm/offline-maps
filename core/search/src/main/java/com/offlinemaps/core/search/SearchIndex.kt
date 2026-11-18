@@ -82,38 +82,50 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             db.delete("places", "region_id = ?", arrayOf(regionId))
             db.execSQL("DELETE FROM places_fts WHERE rowid NOT IN (SELECT rowid FROM places)")
             var count = 0
-            // One ContentValues and one bind array for the whole import, not one of each per row.
+            // One ContentValues for the whole import, not one per row.
             // A pack is tens of thousands of rows for a city and hundreds of thousands for a
-            // country, so the old loop built that many throwaway `ContentValues` maps and that many
-            // four-slot arrays purely to hand them to a call that reads them and drops them. Both
-            // are reused here: `clear()` empties the map before each row is filled, so nothing from
-            // the previous record - a null `admin` or `street` in particular - can survive into the
-            // next one, and the bind array is rewritten slot by slot. SQLite binds the arguments
-            // during the call, so the next row can overwrite them as soon as it returns. The rows
-            // written, their values and their FTS entries are unchanged.
+            // country, so the old loop built that many throwaway `ContentValues` maps purely to hand
+            // them to a call that reads them and drops them. The map is reused here: `clear()`
+            // empties it before each row is filled, so nothing from the previous record - a null
+            // `admin` or `street` in particular - can survive into the next one. The rows written,
+            // their values and their FTS entries are unchanged.
             val values = ContentValues()
-            val ftsArgs = arrayOfNulls<Any>(4)
-            records.forEach { record ->
-                values.clear()
-                values.put("id", record.id)
-                values.put("name", record.name)
-                values.put("type", record.type)
-                values.put("lat", record.lat)
-                values.put("lon", record.lon)
-                values.put("admin", record.admin)
-                values.put("street", record.street)
-                values.put("region_id", regionId)
-                values.put("weight", weightForType(record.type))
-                val rowId = db.insertWithOnConflict("places", null, values, SQLiteDatabase.CONFLICT_REPLACE)
-                if (rowId >= 0) {
-                    ftsArgs[0] = rowId
-                    ftsArgs[1] = record.name
-                    ftsArgs[2] = record.admin ?: ""
-                    ftsArgs[3] = record.street ?: ""
-                    db.execSQL(INSERT_FTS_SQL, ftsArgs)
-                    count++
+            // The FTS mirror's insert is prepared once for the whole import rather than once per
+            // row (OPTIMIZATION.md J-27). `db.execSQL(sql, args)` prepares the statement, binds
+            // every argument as a string and finalises it again on each call, so a country pack paid
+            // for a few hundred thousand SQLite prepares and four throwaway strings per row to write
+            // four columns. One compiled statement is bound slot by slot and executed instead;
+            // `clearBindings()` runs first so a row with no `admin` or `street` cannot inherit the
+            // previous row's values - the invariant two `SearchIndexTest` cases pin. The statement
+            // lives inside the transaction and is closed with it, and a failure still throws out of
+            // the loop and rolls the transaction back exactly as `execSQL` did.
+            val insertFts = db.compileStatement(INSERT_FTS_SQL)
+            try {
+                records.forEach { record ->
+                    values.clear()
+                    values.put("id", record.id)
+                    values.put("name", record.name)
+                    values.put("type", record.type)
+                    values.put("lat", record.lat)
+                    values.put("lon", record.lon)
+                    values.put("admin", record.admin)
+                    values.put("street", record.street)
+                    values.put("region_id", regionId)
+                    values.put("weight", weightForType(record.type))
+                    val rowId = db.insertWithOnConflict("places", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                    if (rowId >= 0) {
+                        insertFts.clearBindings()
+                        insertFts.bindLong(1, rowId)
+                        insertFts.bindString(2, record.name)
+                        insertFts.bindString(3, record.admin ?: "")
+                        insertFts.bindString(4, record.street ?: "")
+                        insertFts.execute()
+                        count++
+                    }
+                    if (count % 5000 == 0) onProgress(count)
                 }
-                if (count % 5000 == 0) onProgress(count)
+            } finally {
+                insertFts.close()
             }
             db.setTransactionSuccessful()
             onProgress(count)
