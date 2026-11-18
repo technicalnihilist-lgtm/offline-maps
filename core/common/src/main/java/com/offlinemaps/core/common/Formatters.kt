@@ -1,6 +1,10 @@
 package com.offlinemaps.core.common
 
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -35,11 +39,63 @@ object Formatters {
         }
     }
 
-    /** ETA as a clock time using the device's locale. */
+    /**
+     * ETA as a clock time using the device's locale.
+     *
+     * The navigation panel reads this on every fix, and `SimpleDateFormat` parses its pattern and
+     * resolves its date symbols in the constructor, so building one per read made a per-second
+     * update pay for a formatter it then threw away (OPTIMIZATION.md J-24). One formatter is kept
+     * per thread and reused, with the mutable `Date` it formats into.
+     *
+     * `SimpleDateFormat` is not thread-safe, which is why the cache is a `ThreadLocal` rather than a
+     * shared field. The cached instance is rebuilt when the pattern, the default locale or the
+     * default time zone changes, so a language or time-zone change is reflected on the next read
+     * exactly as a freshly built formatter would have reflected it.
+     */
     fun eta(epochMillis: Long, is24Hour: Boolean = true): String {
-        val pattern = if (is24Hour) "HH:mm" else "h:mm a"
-        return java.text.SimpleDateFormat(pattern, Locale.getDefault()).format(java.util.Date(epochMillis))
+        val pattern = if (is24Hour) ETA_24_HOUR else ETA_12_HOUR
+        return etaFormat(pattern, Locale.getDefault(), TimeZone.getDefault().id).format(epochMillis)
     }
+
+    /**
+     * The formatter this thread last built for [eta], and what it was built for.
+     *
+     * The time zone is applied explicitly rather than left to the constructor, so the cached
+     * instance carries the zone it was keyed on and a change of zone is a miss instead of a wrong
+     * clock time.
+     */
+    private class EtaFormat(val pattern: String, val locale: Locale, val zoneId: String) {
+        private val format = SimpleDateFormat(pattern, locale).apply {
+            timeZone = TimeZone.getTimeZone(zoneId)
+        }
+        private val instant = Date()
+
+        fun matches(pattern: String, locale: Locale, zoneId: String): Boolean =
+            this.pattern == pattern && this.locale == locale && this.zoneId == zoneId
+
+        fun format(epochMillis: Long): String {
+            instant.time = epochMillis
+            return format.format(instant)
+        }
+    }
+
+    private val etaFormats = ThreadLocal<EtaFormat>()
+    private val etaFormatBuildCount = AtomicInteger(0)
+
+    private fun etaFormat(pattern: String, locale: Locale, zoneId: String): EtaFormat {
+        val cached = etaFormats.get()
+        if (cached != null && cached.matches(pattern, locale, zoneId)) return cached
+        val built = EtaFormat(pattern, locale, zoneId)
+        etaFormatBuildCount.incrementAndGet()
+        etaFormats.set(built)
+        return built
+    }
+
+    /**
+     * How many ETA formatters have been built. A test hook, never read by the app: it is what pins
+     * [eta] to one build per thread instead of one per call (OPTIMIZATION.md J-24).
+     */
+    internal fun etaFormatsBuilt(): Int = etaFormatBuildCount.get()
 
     /** Byte sizes in binary units, e.g. "512 KB", "1.4 GB". */
     fun bytes(bytes: Long): String {
@@ -73,11 +129,16 @@ object Formatters {
         if (meters == null || !meters.isFinite()) "unknown" else "+/- ${meters.roundToLong()} m"
 
     fun bearingCompass(degrees: Double): String {
-        val dirs = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
         val idx = (((degrees % 360.0 + 360.0) % 360.0) / 45.0).roundToLong() % 8
-        return dirs[idx.toInt()]
+        return COMPASS_POINTS[idx.toInt()]
     }
 
     fun plural(count: Int, singular: String, plural: String = singular + "s"): String =
         if (abs(count) == 1) "$count $singular" else "$count $plural"
+
+    private const val ETA_24_HOUR = "HH:mm"
+    private const val ETA_12_HOUR = "h:mm a"
+
+    /** The eight compass octants, in order from north. Built once, not once per call. */
+    private val COMPASS_POINTS = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 }
