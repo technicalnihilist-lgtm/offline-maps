@@ -82,24 +82,35 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
             db.delete("places", "region_id = ?", arrayOf(regionId))
             db.execSQL("DELETE FROM places_fts WHERE rowid NOT IN (SELECT rowid FROM places)")
             var count = 0
+            // One ContentValues and one bind array for the whole import, not one of each per row.
+            // A pack is tens of thousands of rows for a city and hundreds of thousands for a
+            // country, so the old loop built that many throwaway `ContentValues` maps and that many
+            // four-slot arrays purely to hand them to a call that reads them and drops them. Both
+            // are reused here: `clear()` empties the map before each row is filled, so nothing from
+            // the previous record - a null `admin` or `street` in particular - can survive into the
+            // next one, and the bind array is rewritten slot by slot. SQLite binds the arguments
+            // during the call, so the next row can overwrite them as soon as it returns. The rows
+            // written, their values and their FTS entries are unchanged.
+            val values = ContentValues()
+            val ftsArgs = arrayOfNulls<Any>(4)
             records.forEach { record ->
-                val values = ContentValues().apply {
-                    put("id", record.id)
-                    put("name", record.name)
-                    put("type", record.type)
-                    put("lat", record.lat)
-                    put("lon", record.lon)
-                    put("admin", record.admin)
-                    put("street", record.street)
-                    put("region_id", regionId)
-                    put("weight", weightForType(record.type))
-                }
+                values.clear()
+                values.put("id", record.id)
+                values.put("name", record.name)
+                values.put("type", record.type)
+                values.put("lat", record.lat)
+                values.put("lon", record.lon)
+                values.put("admin", record.admin)
+                values.put("street", record.street)
+                values.put("region_id", regionId)
+                values.put("weight", weightForType(record.type))
                 val rowId = db.insertWithOnConflict("places", null, values, SQLiteDatabase.CONFLICT_REPLACE)
                 if (rowId >= 0) {
-                    db.execSQL(
-                        "INSERT INTO places_fts(rowid, name, admin, street) VALUES (?, ?, ?, ?)",
-                        arrayOf(rowId, record.name, record.admin ?: "", record.street ?: ""),
-                    )
+                    ftsArgs[0] = rowId
+                    ftsArgs[1] = record.name
+                    ftsArgs[2] = record.admin ?: ""
+                    ftsArgs[3] = record.street ?: ""
+                    db.execSQL(INSERT_FTS_SQL, ftsArgs)
                     count++
                 }
                 if (count % 5000 == 0) onProgress(count)
@@ -362,6 +373,13 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, n
         private const val CREATE_PLACES_FTS =
             "CREATE VIRTUAL TABLE places_fts USING fts4(" +
                 "name, admin, street, tokenize=unicode61, prefix=\"2,3\")"
+
+        /**
+         * The FTS mirror of one `places` row. A constant because it was rebuilt as a fresh string
+         * literal per imported row - a pack is hundreds of thousands of rows.
+         */
+        private const val INSERT_FTS_SQL =
+            "INSERT INTO places_fts(rowid, name, admin, street) VALUES (?, ?, ?, ?)"
 
         /**
          * The two patterns [toFtsTerms] runs over the user's text, compiled once for the process

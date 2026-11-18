@@ -6,7 +6,7 @@ build-tools 34.0.0, Gradle 8.9 wrapper).
 Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/44252806555> - **success**.
 (The counts below are that run's; the badge on the README links the latest run.)
 
-## Automated tests — 721 tests, 0 failures
+## Automated tests — 723 tests, 0 failures
 
 | Module | Tests |
 |---|---|
@@ -15,11 +15,11 @@ Run: <https://github.com/technicalnihilist-lgtm/offline-maps/actions/runs/442528
 | `core/map` | 129 |
 | `core/offline` | 122 |
 | `core/routing` | 138 |
-| `core/search` | 65 |
+| `core/search` | 67 |
 | `core/location` | 33 |
 | `core/data` | 15 |
 | `core/ui` | 0 |
-| **total** | **721** |
+| **total** | **723** |
 
 Counts are read from the Gradle HTML report artifacts of the run (`testDebugUnitTest`), and each
 number is the number of `@Test` methods in that module: `DocsConsistencyTest` counts them in the

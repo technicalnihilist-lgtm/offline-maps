@@ -194,6 +194,62 @@ class SearchIndexTest {
     }
 
     @Test
+    fun `an imported row does not inherit the previous row's admin and street`() {
+        // The importer reuses one ContentValues and one bind array for the whole pack, so this is
+        // the regression test for that buffer: the record that follows one carrying an admin and a
+        // street carries neither, and must not inherit them in either table.
+        index.importPack(
+            "andorra",
+            sequenceOf(
+                PlaceRecord(
+                    "n1", "Andorra la Vella", "town", 42.5069, 1.5212,
+                    admin = "Andorra la Vella", street = "Carrer Major",
+                ),
+                PlaceRecord("n2", "Ordino", "town", 42.5562, 1.5335),
+            ),
+        )
+        val (admin, street) = index.readableDatabase
+            .rawQuery("SELECT admin, street FROM places WHERE id = ?", arrayOf("n2"))
+            .use { cursor ->
+                cursor.moveToFirst()
+                cursor.getString(0) to cursor.getString(1)
+            }
+        assertNull("admin leaked from the previous row", admin)
+        assertNull("street leaked from the previous row", street)
+        assertEquals("only the row that has the street is an FTS hit", listOf("n1"), index.search("Carrer").map { it.id })
+        assertEquals("the row after it is still found by its own name", listOf("n2"), index.search("Ordino").map { it.id })
+    }
+
+    @Test
+    fun `every imported row keeps its own admin and street`() {
+        val records = (0 until 50).asSequence().map { i ->
+            PlaceRecord(
+                id = "r$i",
+                name = "Place $i",
+                type = "poi",
+                lat = 42.5,
+                lon = 1.5,
+                admin = if (i % 2 == 0) "Parish $i" else null,
+                street = if (i % 3 == 0) "Street $i" else null,
+            )
+        }
+        assertEquals(50, index.importPack("andorra", records))
+        val rows = index.readableDatabase
+            .rawQuery("SELECT id, admin, street FROM places ORDER BY id", null)
+            .use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2)))
+                }
+            }
+        assertEquals(50, rows.size)
+        rows.forEach { (id, admin, street) ->
+            val i = id.removePrefix("r").toInt()
+            assertEquals("admin of $id", if (i % 2 == 0) "Parish $i" else null, admin)
+            assertEquals("street of $id", if (i % 3 == 0) "Street $i" else null, street)
+        }
+    }
+
+    @Test
     fun `deleting a region removes only its places`() {
         index.importPack("andorra", writePack(listOf(PlaceRecord("n1", "Ordino", "town", 42.5562, 1.5335))))
         index.importPack("other", writePack(listOf(PlaceRecord("n9", "Malta", "country", 35.9, 14.5))))
