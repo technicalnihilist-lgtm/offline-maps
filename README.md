@@ -1,10 +1,8 @@
 <div align="center">
 
+<img src="assets/banner.svg" alt="Offline-first 3D world map &amp; navigation for Android — MapLibre vector 3D maps, downloadable…">
+
 <a href="https://github.com/technicalnihilist-lgtm/offline-maps/stargazers"><img src="https://img.shields.io/badge/stars-1-5A31F4?style=for-the-badge&logo=github&logoColor=white" alt="stars: 1"></a>&nbsp;<a href="https://github.com/technicalnihilist-lgtm/offline-maps/network/members"><img src="https://img.shields.io/badge/forks-0-3FB950?style=for-the-badge" alt="forks: 0"></a>
-
-<h3>Offline-first 3D world map &amp; navigation for Android — MapLibre vector 3D maps, downloadable…</h3>
-
-<img src="https://img.shields.io/badge/Kotlin-5865F2?style=flat-square" alt="Kotlin"> <img src="https://img.shields.io/badge/Android-3B3F4A?style=flat-square" alt="Android"> <img src="https://img.shields.io/badge/APK-3FB950?style=flat-square" alt="APK"> <img src="https://img.shields.io/badge/Graphhopper-EC4899?style=flat-square" alt="Graphhopper">
 
 <a href="https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest"><img src="https://img.shields.io/badge/DOWNLOAD-APK-6D5AE6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"></a> <a href="https://technicalnihilist-lgtm.github.io/offline-maps/"><img src="https://img.shields.io/badge/OPEN-WEBSITE-EC4899?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a>
 
@@ -16,13 +14,7 @@
 
 <a href="https://github.com/technicalnihilist-lgtm/offline-maps/releases/latest"><img src="https://img.shields.io/badge/VERSION-v1.0.93-6D5AE6?style=for-the-badge" alt="VERSION: v1.0.93"></a> <img src="https://img.shields.io/badge/DOWNLOADS-150-3FB950?style=for-the-badge" alt="DOWNLOADS: 150"> <a href="https://technicalnihilist-lgtm.github.io/offline-maps/"><img src="https://img.shields.io/badge/WEBSITE-LIVE-EC4899?style=for-the-badge&logo=googlechrome&logoColor=white" alt="WEBSITE: LIVE"></a>
 
-<h4>Get it from</h4>
-
-<a href="https://github.com/technicalnihilist-lgtm/offline-maps/releases"><img src="https://img.shields.io/badge/GitHub-Releases-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Releases"></a> <a href="https://technicalnihilist-lgtm.github.io/offline-maps/"><img src="https://img.shields.io/badge/Website-Live-EC4899?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a> <a href="https://github.com/technicalnihilist-lgtm/offline-maps/archive/refs/heads/main.zip"><img src="https://img.shields.io/badge/Source-ZIP-0EA5E9?style=for-the-badge&logo=github&logoColor=white" alt="Source ZIP"></a>
-
 </div>
-
----
 
 ---
 
